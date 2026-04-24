@@ -84,3 +84,5 @@ claude_desktop_config.json
 hook/
 # === Docker volumes (runtime data) ===
 .volumes/
+.opencode/
+.vscode/
