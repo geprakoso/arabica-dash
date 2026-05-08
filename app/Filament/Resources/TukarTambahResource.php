@@ -40,12 +40,14 @@ use Filament\Infolists\Infolist;
 use Filament\Support\Enums\FontWeight;
 use Filament\Tables;
 use Filament\Tables\Actions\Action;
+use Filament\Tables\Actions\StaticAction;
 use Filament\Tables\Columns\ImageColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Icetalker\FilamentTableRepeater\Forms\Components\TableRepeater;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 
 class TukarTambahResource extends BaseResource
@@ -1383,87 +1385,220 @@ class TukarTambahResource extends BaseResource
                             $livewire->redirect(TukarTambahResource::getUrl('edit', ['record' => $record]));
                         }),
                     Tables\Actions\DeleteAction::make()
-                        ->visible(fn(TukarTambah $record) => $record->canDelete())
-                        ->action(function ($record, $livewire) {
-                            try {
-                                $record->delete();
-                                $livewire->dispatch('close-modal', id: 'delete');
-                                \Filament\Notifications\Notification::make()
-                                    ->title('Tukar tambah berhasil dihapus')
-                                    ->success()
-                                    ->send();
-                            } catch (\Illuminate\Validation\ValidationException $e) {
-                                $messages = collect($e->errors())
-                                    ->flatten()
-                                    ->implode(' ');
-                                $livewire->dispatch('close-modal', id: 'delete');
-                                \Filament\Notifications\Notification::make()
-                                    ->title('Tidak Bisa Dihapus')
-                                    ->body($messages)
-                                    ->icon('heroicon-o-exclamation-triangle')
-                                    ->danger()
-                                    ->persistent()
-                                    ->send();
-                                $livewire->deleteBlockedMessage = $messages;
-                                $livewire->deleteBlockedPenjualanReferences = $record->getExternalPenjualanReferences()->all();
-                                $livewire->replaceMountedAction('deleteBlocked');
+                        ->visible(fn() => auth()->user()?->hasRole('godmode'))
+                        ->requiresConfirmation()
+                        ->modalHeading(
+                            fn(TukarTambah $record): string => $record->canDelete() && $record->getExternalPenjualanReferences()->isEmpty()
+                                ? 'Hapus Tukar Tambah'
+                                : 'Tidak Bisa Dihapus'
+                        )
+                        ->modalIcon(
+                            fn(TukarTambah $record): string => $record->canDelete() && $record->getExternalPenjualanReferences()->isEmpty()
+                                ? 'heroicon-o-trash'
+                                : 'heroicon-o-exclamation-triangle'
+                        )
+                        ->modalIconColor(
+                            fn(TukarTambah $record): string => $record->canDelete() && $record->getExternalPenjualanReferences()->isEmpty()
+                                ? 'danger'
+                                : 'warning'
+                        )
+                        ->modalDescription(function (TukarTambah $record): string {
+                            $canDelete = $record->canDelete() && $record->getExternalPenjualanReferences()->isEmpty();
+
+                            if (! $canDelete) {
+                                $reasons = [];
+
+                                if ($record->isFinal()) {
+                                    $reasons[] = '• Status sudah final, tidak bisa dihapus';
+                                }
+                                if ($record->is_locked) {
+                                    $reasons[] = '• Transaksi sudah terkunci';
+                                }
+
+                                $notas = $record->getExternalPenjualanReferences()->pluck('nota')->filter()->values();
+                                if ($notas->isNotEmpty()) {
+                                    $reasons[] = '• Item pembelian dipakai di penjualan: ' . $notas->implode(', ');
+                                }
+
+                                return implode("\n", $reasons) ?: 'Tukar tambah ini tidak dapat dihapus.';
                             }
+
+                            return 'Apakah Anda yakin ingin menghapus tukar tambah ' . $record->kode . '? Tindakan ini tidak dapat dibatalkan.';
+                        })
+                        ->modalSubmitAction(function (TukarTambah $record) {
+                            $canDelete = $record->canDelete() && $record->getExternalPenjualanReferences()->isEmpty();
+
+                            return $canDelete ? null : false;
+                        })
+                        ->modalCancelActionLabel('Tutup')
+                        ->extraModalFooterActions(function (TukarTambah $record): array {
+                            $canDelete = $record->canDelete() && $record->getExternalPenjualanReferences()->isEmpty();
+
+                            if ($canDelete) {
+                                return [];
+                            }
+
+                            return $record->getExternalPenjualanReferences()
+                                ->filter(fn(array $ref) => ! empty($ref['id']))
+                                ->map(function (array $ref, int $index) {
+                                    $nota = $ref['nota'] ?? null;
+                                    $label = $nota ? 'Lihat ' . $nota : 'Lihat Penjualan';
+
+                                    return Tables\Actions\StaticAction::make('viewPenjualan' . $index)
+                                        ->button()
+                                        ->label($label)
+                                        ->icon('heroicon-m-arrow-top-right-on-square')
+                                        ->url(PenjualanResource::getUrl('view', ['record' => $ref['id']]))
+                                        ->openUrlInNewTab()
+                                        ->color('warning');
+                                })
+                                ->values()
+                                ->all();
+                        })
+                        ->action(function (TukarTambah $record, $livewire): void {
+                            $canDelete = $record->canDelete() && $record->getExternalPenjualanReferences()->isEmpty();
+
+                            if (! $canDelete) {
+                                return;
+                            }
+
+                            $livewire->deleteRecordId = $record->id_tukar_tambah;
+                            $livewire->mountAction('deleteStep2');
                         }),
                 ])->label('Aksi')
                     ->icon('heroicon-m-ellipsis-horizontal')
                     ->color('gray'),
             ])
             ->bulkActions([
-                \Filament\Tables\Actions\BulkActionGroup::make([
-                    \Filament\Tables\Actions\DeleteBulkAction::make()
-                        ->action(function ($records, $livewire) {
-                            $deletedCount = 0;
-                            $failedCount = 0;
-                            $failedMessages = [];
-                            $failedReferences = [];
+                Tables\Actions\BulkActionGroup::make([
+                    Tables\Actions\BulkAction::make('delete')
+                        ->label('Hapus')
+                        ->icon('heroicon-m-trash')
+                        ->color('danger')
+                        ->visible(fn() => auth()->user()?->hasRole('godmode'))
+                        ->requiresConfirmation()
+                        ->modalCancelAction(false)
+                        ->modalHeading('⚠️ Hapus Tukar Tambah')
+                        ->modalIcon('heroicon-o-trash')
+                        ->modalIconColor('danger')
+                        ->modalContent(function (\Illuminate\Database\Eloquent\Collection $records): \Illuminate\Support\HtmlString {
+                            $canDelete = $records->filter(fn(TukarTambah $r) => $r->canDelete() && $r->getExternalPenjualanReferences()->isEmpty());
+                            $blocked   = $records->filter(fn(TukarTambah $r) => ! ($r->canDelete() && $r->getExternalPenjualanReferences()->isEmpty()));
+
+                            $html = '<div class="space-y-4 text-sm">';
+
+                            if ($canDelete->isNotEmpty()) {
+                                $html .= '<div>';
+                                $html .= '<p class="font-semibold text-success-600 dark:text-success-400 mb-1">✅ Akan dihapus (' . $canDelete->count() . ')</p>';
+                                $html .= '<ul class="space-y-1 pl-3">';
+                                foreach ($canDelete as $r) {
+                                    $html .= '<li class="flex items-center gap-2">'
+                                        . '<span class="font-mono text-xs bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded">' . e($r->kode) . '</span>'
+                                        . '</li>';
+                                }
+                                $html .= '</ul>';
+                                $html .= '</div>';
+                            }
+
+                            if ($blocked->isNotEmpty()) {
+                                $html .= '<div>';
+                                $html .= '<p class="font-semibold text-danger-600 dark:text-danger-400 mb-1">⛔ Tidak bisa dihapus (' . $blocked->count() . ')</p>';
+                                $html .= '<ul class="space-y-2 pl-3">';
+                                foreach ($blocked as $r) {
+                                    $reasons = [];
+                                    if ($r->isFinal()) {
+                                        $reasons[] = '<span class="text-warning-600 dark:text-warning-400">Status final</span>';
+                                    }
+                                    if ($r->is_locked) {
+                                        $reasons[] = '<span class="text-warning-600 dark:text-warning-400">Terkunci</span>';
+                                    }
+                                    $notas = $r->getExternalPenjualanReferences()->pluck('nota')->filter()->implode(', ');
+                                    if ($notas) {
+                                        $reasons[] = '<span class="text-danger-600 dark:text-danger-400">Penjualan: ' . e($notas) . '</span>';
+                                    }
+                                    $html .= '<li>'
+                                        . '<span class="font-mono text-xs bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded">' . e($r->kode) . '</span>';
+                                    if ($reasons) {
+                                        $html .= '<ul class="mt-1 pl-4 space-y-0.5">';
+                                        foreach ($reasons as $reason) {
+                                            $html .= '<li class="text-xs">— ' . $reason . '</li>';
+                                        }
+                                        $html .= '</ul>';
+                                    }
+                                    $html .= '</li>';
+                                }
+                                $html .= '</ul>';
+                                $html .= '</div>';
+                            }
+
+                            if ($canDelete->isEmpty()) {
+                                $html .= '<p class="text-center text-gray-500 dark:text-gray-400 text-xs pt-1">Tidak ada tukar tambah yang bisa dihapus dari pilihan ini.</p>';
+                            }
+
+                            $html .= '<div class="mt-4 p-3 bg-warning-50 dark:bg-warning-900/20 rounded-lg border border-warning-200 dark:border-warning-800">';
+                            $html .= '<p class="text-warning-800 dark:text-warning-200 text-xs"><strong>⚠️ Perhatian:</strong> Penjualan & pembelian terkait juga akan dihapus. Stok akan dikembalikan. Tindakan ini tidak dapat dibatalkan.</p>';
+                            $html .= '</div>';
+
+                            $html .= '</div>';
+
+                            return new \Illuminate\Support\HtmlString($html);
+                        })
+                        ->form([
+                            \Filament\Forms\Components\TextInput::make('password')
+                                ->label('Konfirmasi Password')
+                                ->password()
+                                ->required()
+                                ->placeholder('Masukkan password akun Anda'),
+                        ])
+                        ->modalSubmitActionLabel('🔥 Hapus yang Bisa Dihapus')
+                        ->modalCancelActionLabel('Batal')
+                        ->deselectRecordsAfterCompletion()
+                        ->action(function (\Illuminate\Database\Eloquent\Collection $records, array $data): void {
+                            $user = auth()->user();
+
+                            if (! $user || ! Hash::check($data['password'], $user->password)) {
+                                \Filament\Notifications\Notification::make()
+                                    ->title('Password salah')
+                                    ->body('Password yang Anda masukkan tidak sesuai.')
+                                    ->danger()
+                                    ->send();
+
+                                return;
+                            }
+
+                            \App\Models\Penjualan::$allowTukarTambahDeletion = true;
+                            \App\Models\Pembelian::$allowTukarTambahDeletion = true;
+
+                            $deleted = 0;
+                            $skipped = 0;
 
                             foreach ($records as $record) {
+                                if (! ($record->canDelete() && $record->getExternalPenjualanReferences()->isEmpty())) {
+                                    $skipped++;
+                                    continue;
+                                }
+
                                 try {
                                     $record->delete();
-                                    $deletedCount++;
-                                } catch (\Illuminate\Validation\ValidationException $e) {
-                                    $failedCount++;
-                                    $messages = collect($e->errors())
-                                        ->flatten()
-                                        ->implode(' ');
-                                    $failedMessages[] = "{$record->no_nota}: {$messages}";
-
-                                    $references = $record->getExternalPenjualanReferences();
-                                    foreach ($references as $ref) {
-                                        $failedReferences[] = $ref;
-                                    }
+                                    $deleted++;
+                                } catch (\Exception $e) {
+                                    $skipped++;
                                 }
                             }
 
-                            // Tutup modal terlebih dahulu
-                            $livewire->dispatch('close-modal', id: 'delete');
+                            \App\Models\Penjualan::$allowTukarTambahDeletion = false;
+                            \App\Models\Pembelian::$allowTukarTambahDeletion = false;
 
-                            if ($deletedCount > 0) {
-                                \Filament\Notifications\Notification::make()
-                                    ->title("{$deletedCount} tukar tambah berhasil dihapus")
-                                    ->success()
-                                    ->send();
+                            $body = "Berhasil menghapus {$deleted} tukar tambah.";
+                            if ($skipped > 0) {
+                                $body .= " {$skipped} dilewati karena tidak bisa dihapus.";
                             }
 
-                            if ($failedCount > 0) {
-                                // Notifikasi toast untuk yang gagal
-                                \Filament\Notifications\Notification::make()
-                                    ->title("{$failedCount} tukar tambah tidak bisa dihapus")
-                                    ->body('Item pembelian masih digunakan transaksi lain')
-                                    ->icon('heroicon-o-exclamation-triangle')
-                                    ->danger()
-                                    ->persistent()
-                                    ->send();
-
-                                $livewire->deleteBlockedMessage = implode("\n", $failedMessages);
-                                $livewire->deleteBlockedPenjualanReferences = collect($failedReferences)->unique('id')->values()->all();
-                                $livewire->replaceMountedAction('bulkDeleteBlocked');
-                            }
+                            \Filament\Notifications\Notification::make()
+                                ->title($deleted > 0 ? 'Hapus Selesai' : 'Tidak Ada yang Dihapus')
+                                ->body($body)
+                                ->color($deleted > 0 ? 'success' : 'warning')
+                                ->send();
                         }),
                 ]),
             ])

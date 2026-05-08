@@ -8,14 +8,18 @@ use App\Models\TukarTambah;
 use Filament\Actions\Action;
 use Filament\Actions\CreateAction;
 use Filament\Actions\StaticAction;
+use Filament\Notifications\Notification;
 use Filament\Resources\Pages\ListRecords;
 use Filament\Resources\Pages\ListRecords\Tab;
 use Filament\Support\Enums\Alignment;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Hash;
 
 class ListTukarTambahs extends ListRecords
 {
     protected static string $resource = TukarTambahResource::class;
+
+    public $deleteRecordId;
 
     public array $editBlockedPenjualanReferences = [];
 
@@ -55,6 +59,124 @@ class ListTukarTambahs extends ListRecords
                 ->icon('heroicon-o-plus')
                 ->color('primary'),
         ];
+    }
+
+    public function deleteStep2Action(): Action
+    {
+        return Action::make('deleteStep2')
+            ->modalHeading('⚠️ Dampak Penghapusan')
+            ->modalDescription(function () {
+                $record = TukarTambah::find($this->deleteRecordId);
+                if (! $record) {
+                    return 'Data tidak ditemukan.';
+                }
+
+                $desc = "**Anda akan menghapus tukar tambah {$record->kode}.**\n\n";
+
+                $penjualan = $record->penjualan;
+                if ($penjualan) {
+                    $desc .= "**Penjualan terkait:** {$penjualan->no_nota}\n";
+                    $itemsCount = $penjualan->items()->count();
+                    if ($itemsCount > 0) {
+                        $desc .= "- {$itemsCount} item penjualan akan dihapus\n";
+                    }
+                    $jasaCount = $penjualan->jasaItems()->count();
+                    if ($jasaCount > 0) {
+                        $desc .= "- {$jasaCount} item jasa akan dihapus\n";
+                    }
+                    $paymentCount = $penjualan->pembayaran()->count();
+                    if ($paymentCount > 0) {
+                        $desc .= "- {$paymentCount} data pembayaran penjualan akan dihapus\n";
+                    }
+                    $desc .= "\n";
+                }
+
+                $pembelian = $record->pembelian;
+                if ($pembelian) {
+                    $desc .= "**Pembelian terkait:** {$pembelian->no_po}\n";
+                    $itemsCount = $pembelian->items()->count();
+                    if ($itemsCount > 0) {
+                        $desc .= "- {$itemsCount} item pembelian akan dihapus\n";
+                    }
+                    $paymentCount = $pembelian->pembayaran()->count();
+                    if ($paymentCount > 0) {
+                        $desc .= "- {$paymentCount} data pembayaran pembelian akan dihapus\n";
+                    }
+                    $desc .= "\n";
+                }
+
+                $desc .= 'Apakah Anda yakin ingin melanjutkan?';
+
+                return $desc;
+            })
+            ->modalIcon('heroicon-o-exclamation-triangle')
+            ->modalIconColor('warning')
+            ->modalWidth('md')
+            ->modalSubmitActionLabel('Lanjutkan ke Konfirmasi Password')
+            ->modalCancelAction(false)
+            ->action(function () {
+                $this->replaceMountedAction('deleteStep3');
+            });
+    }
+
+    public function deleteStep3Action(): Action
+    {
+        return Action::make('deleteStep3')
+            ->modalHeading('🔐 Konfirmasi Password')
+            ->modalDescription('Masukkan password Anda untuk mengkonfirmasi penghapusan. Tindakan ini tidak dapat dibatalkan.')
+            ->modalIcon('heroicon-o-lock-closed')
+            ->modalIconColor('danger')
+            ->modalWidth('md')
+            ->form([
+                \Filament\Forms\Components\TextInput::make('password')
+                    ->label('Password')
+                    ->password()
+                    ->required()
+                    ->placeholder('Masukkan password akun Anda'),
+            ])
+            ->modalSubmitActionLabel('🔥 Hapus Tukar Tambah')
+            ->modalCancelAction(false)
+            ->action(function (array $data) {
+                $record = TukarTambah::find($this->deleteRecordId);
+                if (! $record) {
+                    Notification::make()->title('Data tidak ditemukan')->danger()->send();
+
+                    return;
+                }
+
+                $user = auth()->user();
+                if (! $user || ! Hash::check($data['password'], $user->password)) {
+                    Notification::make()
+                        ->title('Password salah')
+                        ->body('Password yang Anda masukkan tidak sesuai.')
+                        ->danger()
+                        ->send();
+
+                    return;
+                }
+
+                try {
+                    \App\Models\Penjualan::$allowTukarTambahDeletion = true;
+                    \App\Models\Pembelian::$allowTukarTambahDeletion = true;
+                    $record->delete();
+                } catch (\Exception $e) {
+                    Notification::make()
+                        ->title('Gagal menghapus')
+                        ->body($e->getMessage())
+                        ->danger()
+                        ->send();
+
+                    return;
+                } finally {
+                    \App\Models\Penjualan::$allowTukarTambahDeletion = false;
+                    \App\Models\Pembelian::$allowTukarTambahDeletion = false;
+                }
+
+                Notification::make()
+                    ->title('Tukar tambah dihapus')
+                    ->success()
+                    ->send();
+            });
     }
 
     protected function editBlockedAction(): Action

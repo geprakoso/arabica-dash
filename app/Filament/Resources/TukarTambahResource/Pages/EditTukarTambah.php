@@ -20,6 +20,7 @@ use Filament\Support\Enums\Alignment;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
 class EditTukarTambah extends EditRecord
@@ -59,47 +60,180 @@ class EditTukarTambah extends EditRecord
                 ->label('Hapus')
                 ->icon('heroicon-m-trash')
                 ->color('danger')
-                ->visible(fn() => $record->canDelete())
+                ->visible(fn() => auth()->user()?->hasRole('godmode'))
                 ->requiresConfirmation()
-                ->modalHeading('Hapus Tukar Tambah')
-                ->modalDescription('Tukar tambah yang masih dipakai transaksi lain akan diblokir.')
-                ->action(function (): void {
-                    try {
-                        $this->record->delete();
+                ->modalHeading(fn() => $this->record->canDelete() ? 'Konfirmasi Hapus Tukar Tambah' : 'Tidak Bisa Dihapus')
+                ->modalIcon(fn() => $this->record->canDelete() ? 'heroicon-o-trash' : 'heroicon-o-exclamation-triangle')
+                ->modalIconColor(fn() => $this->record->canDelete() ? 'danger' : 'warning')
+                ->modalDescription(function (): string {
+                    $record = $this->record;
 
-                        // Tutup modal
-                        $this->dispatch('close-modal', id: 'delete');
+                    if (! $record->canDelete()) {
+                        $reasons = [];
 
-                        Notification::make()
-                            ->title('Tukar tambah dihapus')
-                            ->success()
-                            ->send();
+                        if ($record->isFinal()) {
+                            $reasons[] = '• Status sudah final, tidak bisa dihapus';
+                        }
+                        if ($record->is_locked) {
+                            $reasons[] = '• Transaksi sudah terkunci';
+                        }
 
-                        $this->redirect(TukarTambahResource::getUrl('index'));
-                    } catch (ValidationException $exception) {
-                        $messages = collect($exception->errors())
-                            ->flatten()
-                            ->implode(' ');
+                        $notas = $record->getExternalPenjualanReferences()->pluck('nota')->filter()->values();
+                        if ($notas->isNotEmpty()) {
+                            $reasons[] = '• Item pembelian dipakai di penjualan: ' . $notas->implode(', ');
+                        }
 
-                        $this->deleteBlockedMessage = $messages ?: 'Gagal menghapus tukar tambah.';
-                        $this->deleteBlockedPenjualanReferences = $this->record->getExternalPenjualanReferences()->all();
-
-                        // Tutup modal terlebih dahulu
-                        $this->dispatch('close-modal', id: 'delete');
-
-                        // Notifikasi toast untuk delete blocked
-                        Notification::make()
-                            ->title('Tidak Bisa Dihapus')
-                            ->body($this->deleteBlockedMessage)
-                            ->icon('heroicon-o-exclamation-triangle')
-                            ->danger()
-                            ->persistent()
-                            ->send();
-
-                        $this->replaceMountedAction('deleteBlocked');
+                        return implode("\n", $reasons) ?: 'Tukar tambah ini tidak dapat dihapus.';
                     }
+
+                    return 'Apakah Anda yakin ingin menghapus tukar tambah **' . $record->kode . '**? Langkah ini tidak dapat dibatalkan.';
+                })
+                ->modalSubmitAction(fn() => $this->record->canDelete() ? null : false)
+                ->modalCancelAction(fn(StaticAction $action) => $this->record->canDelete()
+                    ? $action->label('Batal')
+                    : $action->label('Tutup'))
+                ->extraModalFooterActions(function (): array {
+                    if ($this->record->canDelete()) {
+                        return [];
+                    }
+
+                    return $this->record->getExternalPenjualanReferences()
+                        ->filter(fn(array $ref) => ! empty($ref['id']))
+                        ->map(function (array $ref, int $index) {
+                            $nota = $ref['nota'] ?? null;
+                            $label = $nota ? 'Lihat ' . $nota : 'Lihat Penjualan';
+
+                            return StaticAction::make('viewPenjualan' . $index)
+                                ->button()
+                                ->label($label)
+                                ->icon('heroicon-m-arrow-top-right-on-square')
+                                ->url(PenjualanResource::getUrl('view', ['record' => $ref['id']]))
+                                ->openUrlInNewTab()
+                                ->color('warning');
+                        })
+                        ->values()
+                        ->all();
+                })
+                ->action(function (): void {
+                    if (! $this->record->canDelete()) {
+                        $this->replaceMountedAction('deleteBlocked');
+                        return;
+                    }
+
+                    $this->replaceMountedAction('deleteStep2');
                 }),
         ];
+    }
+
+    protected function deleteStep2Action(): Action
+    {
+        return Action::make('deleteStep2')
+            ->modalHeading('⚠️ Dampak Penghapusan')
+            ->modalDescription(function (): string {
+                $record = $this->record;
+                $desc = "**Anda akan menghapus tukar tambah {$record->kode}.**\n\n";
+
+                $penjualan = $record->penjualan;
+                if ($penjualan) {
+                    $desc .= "**Penjualan terkait:** {$penjualan->no_nota}\n";
+                    $itemsCount = $penjualan->items()->count();
+                    if ($itemsCount > 0) {
+                        $desc .= "- {$itemsCount} item penjualan akan dihapus\n";
+                    }
+                    $jasaCount = $penjualan->jasaItems()->count();
+                    if ($jasaCount > 0) {
+                        $desc .= "- {$jasaCount} item jasa akan dihapus\n";
+                    }
+                    $paymentCount = $penjualan->pembayaran()->count();
+                    if ($paymentCount > 0) {
+                        $desc .= "- {$paymentCount} data pembayaran penjualan akan dihapus\n";
+                    }
+                    $desc .= "\n";
+                }
+
+                $pembelian = $record->pembelian;
+                if ($pembelian) {
+                    $desc .= "**Pembelian terkait:** {$pembelian->no_po}\n";
+                    $itemsCount = $pembelian->items()->count();
+                    if ($itemsCount > 0) {
+                        $desc .= "- {$itemsCount} item pembelian akan dihapus\n";
+                    }
+                    $paymentCount = $pembelian->pembayaran()->count();
+                    if ($paymentCount > 0) {
+                        $desc .= "- {$paymentCount} data pembayaran pembelian akan dihapus\n";
+                    }
+                    $desc .= "\n";
+                }
+
+                $desc .= 'Apakah Anda yakin ingin melanjutkan?';
+
+                return $desc;
+            })
+            ->modalIcon('heroicon-o-exclamation-triangle')
+            ->modalIconColor('warning')
+            ->modalWidth('md')
+            ->modalSubmitActionLabel('Lanjutkan ke Konfirmasi Password')
+            ->modalCancelAction(false)
+            ->action(function (): void {
+                $this->replaceMountedAction('deleteStep3');
+            })
+            ->color('warning');
+    }
+
+    public function deleteStep3Action(): Action
+    {
+        return Action::make('deleteStep3')
+            ->modalHeading('🔐 Konfirmasi Password')
+            ->modalDescription('Masukkan password Anda untuk mengkonfirmasi penghapusan. Tindakan ini tidak dapat dibatalkan.')
+            ->modalIcon('heroicon-o-lock-closed')
+            ->modalIconColor('danger')
+            ->modalWidth('md')
+            ->form([
+                \Filament\Forms\Components\TextInput::make('password')
+                    ->label('Password')
+                    ->password()
+                    ->required()
+                    ->placeholder('Masukkan password akun Anda'),
+            ])
+            ->modalSubmitActionLabel('🔥 Hapus Tukar Tambah')
+            ->modalCancelAction(false)
+            ->action(function (array $data): void {
+                $user = auth()->user();
+
+                if (! $user || ! Hash::check($data['password'], $user->password)) {
+                    Notification::make()
+                        ->title('Password salah')
+                        ->body('Password yang Anda masukkan tidak sesuai.')
+                        ->danger()
+                        ->send();
+
+                    return;
+                }
+
+                try {
+                    $this->record->delete();
+                } catch (ValidationException $exception) {
+                    $messages = collect($exception->errors())
+                        ->flatten()
+                        ->implode(' ');
+
+                    Notification::make()
+                        ->title('Gagal menghapus')
+                        ->body($messages ?: 'Terjadi kesalahan saat menghapus.')
+                        ->danger()
+                        ->send();
+
+                    return;
+                }
+
+                Notification::make()
+                    ->title('Tukar tambah berhasil dihapus')
+                    ->success()
+                    ->send();
+
+                $this->redirect(TukarTambahResource::getUrl('index'));
+            })
+            ->color('danger');
     }
 
     protected function getFormActions(): array
