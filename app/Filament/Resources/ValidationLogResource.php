@@ -131,9 +131,10 @@ class ValidationLogResource extends Resource
                         ->description('Data yang dikirim saat validasi gagal')
                         ->collapsed()
                         ->schema([
-                            Infolists\Components\KeyValueEntry::make('input_data')
+                            Infolists\Components\ViewEntry::make('input_data')
                                 ->label('')
-                                ->columnSpanFull(),
+                                ->columnSpanFull()
+                                ->view('filament.infolists.components.json-viewer'),
                         ]),
                 ])->columnSpan(2),
 
