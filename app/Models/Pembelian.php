@@ -31,6 +31,11 @@ class Pembelian extends Model
         'id_karyawan',
         'id_supplier',
         'foto_dokumen',
+        // R11, R16: Fields dari Purchase Module Policy
+        'grand_total',
+        'total_paid',
+        'is_locked',
+        'no_tt',
     ];
 
     protected static function booted(): void
@@ -122,7 +127,7 @@ class Pembelian extends Model
      */
     public function clearCalculationCache(): void
     {
-        CacheHelper::flush([CacheHelper::TAG_PEMBELIAN]);
+        CacheHelper::flush([CacheHelper::TAG_PEMBELIAN, CacheHelper::TAG_PEMBELIAN . ':paid']);
     }
 
     public static function generatePO(): string
@@ -177,7 +182,86 @@ class Pembelian extends Model
         'tgl_tempo' => 'date',
         'harga_jual' => 'decimal:2',
         'foto_dokumen' => 'array',
+        // R11, R16: Casts dari Purchase Module Policy
+        'grand_total' => 'decimal:2',
+        'total_paid' => 'decimal:2',
+        'is_locked' => 'boolean',
     ];
+
+    /**
+     * R06-R07: Status pembayaran (calculated, tidak disimpan di DB)
+     * TEMPO = pembayaran < grand_total
+     * LUNAS = pembayaran >= grand_total
+     */
+    public function getStatusAttribute(): string
+    {
+        $paid = $this->total_paid > 0 ? (float) $this->total_paid : $this->calculateTotalPaidCached();
+        $total = $this->grand_total > 0 ? (float) $this->grand_total : $this->calculateTotalPembelianCached();
+
+        return $paid >= $total ? 'LUNAS' : 'TEMPO';
+    }
+
+    /**
+     * R08: Kelebihan pembayaran (calculated)
+     */
+    public function getKelebihanAttribute(): float
+    {
+        $paid = $this->total_paid > 0 ? (float) $this->total_paid : $this->calculateTotalPaidCached();
+        $total = $this->grand_total > 0 ? (float) $this->grand_total : $this->calculateTotalPembelianCached();
+
+        return max(0, (float) $paid - (float) $total);
+    }
+
+    /**
+     * R16: Lock Final - mengunci data dari edit
+     * Irreversible: tidak bisa dibuka kembali
+     *
+     * @throws \Exception
+     */
+    public function lockFinal(): void
+    {
+        if ($this->is_locked) {
+            throw new \Exception('Data pembelian sudah terkunci');
+        }
+
+        // R11: Pastikan grand_total sudah di-set sebelum lock
+        if (is_null($this->grand_total) || $this->grand_total <= 0) {
+            $this->grand_total = $this->calculateTotalPembelianCached();
+        }
+
+        $this->update(['is_locked' => true]);
+    }
+
+    /**
+     * R16: Cek apakah data bisa diedit
+     */
+    public function canEdit(): bool
+    {
+        return ! $this->is_locked;
+    }
+
+    /**
+     * R16: Cek apakah bisa dihapus (lock tidak mempengaruhi)
+     * Hanya R12 & R13 yang menentukan
+     */
+    public function canDelete(): bool
+    {
+        // R12: Cek apakah sudah ada penjualan
+        $hasSales = $this->items()
+            ->whereHas('penjualanItems')
+            ->exists();
+
+        if ($hasSales) {
+            return false;
+        }
+
+        // R13: Cek apakah ada NO TT
+        if (! empty($this->no_tt)) {
+            return false;
+        }
+
+        return true;
+    }
 
     public function karyawan()
     {
@@ -297,77 +381,11 @@ class Pembelian extends Model
         $totalPaid = (float) ($this->pembayaran()->sum('jumlah') ?? 0);
         $status = $total <= 0 || $totalPaid >= $total ? 'lunas' : 'tempo';
 
-        if ($this->jenis_pembayaran === $status) {
-            return;
-        }
-
         $this->forceFill([
             'jenis_pembayaran' => $status,
+            'grand_total' => $total,
+            'total_paid' => $totalPaid,
         ])->saveQuietly();
     }
 
-    /**
-     * Force delete this Pembelian and mark affected Penjualan as "nerfed".
-     * This bypasses the regular validation that blocks deletion when items are used in Penjualan.
-     *
-     * @return array{deleted: bool, affected_penjualan: \Illuminate\Support\Collection}
-     */
-    public function forceDeleteWithCascade(): array
-    {
-        $affectedPenjualan = collect();
-
-        // Find all Penjualan that reference this Pembelian's items
-        $penjualanIds = $this->items()
-            ->whereHas('penjualanItems')
-            ->with(['penjualanItems.penjualan'])
-            ->get()
-            ->flatMap(fn ($item) => $item->penjualanItems)
-            ->map(fn ($item) => $item->penjualan?->getKey())
-            ->filter()
-            ->unique()
-            ->values();
-
-        if ($penjualanIds->isNotEmpty()) {
-            // Mark affected Penjualan as nerfed
-            Penjualan::whereIn('id_penjualan', $penjualanIds)->update(['is_nerfed' => true]);
-
-            // Get details for response
-            $affectedPenjualan = Penjualan::whereIn('id_penjualan', $penjualanIds)
-                ->select('id_penjualan', 'no_nota')
-                ->get();
-
-            // Orphan the PenjualanItem references (set id_pembelian_item to null)
-            PenjualanItem::whereHas('pembelianItem', function ($query) {
-                $query->where('id_pembelian', $this->id_pembelian);
-            })->update(['id_pembelian_item' => null]);
-        }
-
-        // Unlink from TukarTambah if exists (don't delete TukarTambah, just unlink)
-        if ($this->tukarTambah()->exists()) {
-            $this->tukarTambah()->update(['pembelian_id' => null]);
-        }
-
-        // Delete related records using DB queries to bypass model events
-        \Illuminate\Support\Facades\DB::table('tb_pembelian_jasa')
-            ->where('id_pembelian', $this->id_pembelian)
-            ->delete();
-
-        \Illuminate\Support\Facades\DB::table('tb_pembelian_pembayaran')
-            ->where('id_pembelian', $this->id_pembelian)
-            ->delete();
-
-        \Illuminate\Support\Facades\DB::table('tb_pembelian_item')
-            ->where('id_pembelian', $this->id_pembelian)
-            ->delete();
-
-        // Delete the Pembelian itself using DB query to bypass model events
-        \Illuminate\Support\Facades\DB::table('tb_pembelian')
-            ->where('id_pembelian', $this->id_pembelian)
-            ->delete();
-
-        return [
-            'deleted' => true,
-            'affected_penjualan' => $affectedPenjualan,
-        ];
     }
-}

@@ -3,10 +3,12 @@
 namespace App\Filament\Resources;
 
 use App\Filament\Resources\PembelianResource\Pages;
+use App\Filament\Resources\PenjualanResource;
 use App\Models\Jasa;
 use App\Models\Pembelian;
 use App\Models\PembelianItem;
 use App\Models\RequestOrder;
+
 use App\Models\Supplier;
 use App\Support\WebpUpload;
 use Filament\Forms\Components\Actions\Action as FormAction;
@@ -39,6 +41,7 @@ use Filament\Infolists\Infolist;
 use Filament\Support\Enums\FontWeight;
 use Filament\Tables;
 use Filament\Tables\Actions\Action;
+use Filament\Actions\StaticAction;
 use Filament\Tables\Columns\ImageColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
@@ -112,7 +115,8 @@ class PembelianResource extends BaseResource
                                     ->displayFormat('d F Y')
                                     ->prefixIcon('heroicon-m-calendar-days')
                                     ->native(false)
-                                    ->required(),
+                                    ->required()
+                                    ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian),
                             ]),
 
                             // Kolom 2: Pihak Terkait (Supplier & Karyawan)
@@ -144,7 +148,8 @@ class PembelianResource extends BaseResource
                                     ])
                                     ->createOptionUsing(fn(array $data): int => (int) Supplier::query()->create($data)->getKey())
                                     ->required()
-                                    ->native(false),
+                                    ->native(false)
+                                    ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian),
 
                                 Select::make('id_karyawan')
                                     ->label('PIC / Karyawan')
@@ -154,7 +159,8 @@ class PembelianResource extends BaseResource
                                     ->default(fn() => Auth::user()->karyawan?->id)
                                     ->prefixIcon('heroicon-m-user')
                                     ->required()
-                                    ->native(false),
+                                    ->native(false)
+                                    ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian),
                             ]),
 
                             // Kolom 3: Referensi & Tipe
@@ -170,7 +176,8 @@ class PembelianResource extends BaseResource
                                         // Asumsi fungsi formatRequestOrderReferences ada di model
                                         $set('catatan', self::formatRequestOrderReferences($state ?? []));
                                     })
-                                    ->native(false),
+                                    ->native(false)
+                                    ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian),
 
                                 Select::make('tipe_pembelian')
                                     ->label('Pajak')
@@ -179,14 +186,16 @@ class PembelianResource extends BaseResource
                                         'ppn' => 'PPN (11%)',
                                     ])
                                     ->default('non_ppn')
-                                    ->native(false),
+                                    ->native(false)
+                                    ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian),
 
                                 TextInput::make('nota_supplier')
                                     ->label('Nota Referensi')
                                     ->placeholder('Opsional')
                                     ->maxLength(255)
                                     ->prefixIcon('heroicon-m-receipt-refund')
-                                    ->columnSpanFull(),
+                                    ->columnSpanFull()
+                                    ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian),
                             ])
                                 ->columns(2),
                             // Tab::make('Produk Dibeli')
@@ -246,31 +255,37 @@ class PembelianResource extends BaseResource
                     ]),
 
                 // === BAGIAN 2: DAFTAR BARANG (REPEATER) ===
+                // R09: Section Item Barang LOCKED saat edit - tidak bisa diubah
                 FormsSection::make('Item Barang')
                     ->icon('heroicon-o-shopping-cart')
                     ->description('Daftar barang yang dibeli')
                     ->schema([
                         TableRepeater::make('items')
                             ->relationship('items')
-                            ->hiddenLabel() // Hilangkan label "Items" agar lebih clean
+                            ->hiddenLabel()
                             ->minItems(0)
-                            // ->disabled(fn (?Pembelian $record, string $operation): bool => $operation === 'edit' && $record?->isEditLocked())
-                            ->columns(12) // Menggunakan grid 12 kolom agar presisi
+                            // R09: LOCKED saat edit - disable semua field dan aksi
+                            ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian)
+                            ->deletable(fn($livewire) => ! ($livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian))
+                            ->reorderable(fn($livewire) => ! ($livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian))
+                            ->addable(fn($livewire) => ! ($livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian))
+                            ->cloneable(false)
+                            ->columns(12)
                             ->schema([
+                                // R02: Produk duplikat dengan kondisi berbeda diperbolehkan
                                 Select::make('id_produk')
                                     ->label('Produk')
-                                    ->relationship('produk', 'nama_produk')
+                                    ->relationship(
+                                        name: 'produk',
+                                        titleAttribute: 'nama_produk',
+                                        modifyQueryUsing: fn($query) => $query->whereNull('deleted_at')
+                                    )
                                     ->searchable()
                                     ->preload()
                                     ->required()
-                                    ->disableOptionsWhenSelectedInSiblingRepeaterItems() // Mencegah duplikasi produk
-                                    ->afterStateUpdated(function (Set $set, ?int $state): void {
-                                        $pricing = self::getLastRecordedPricingForProduct((int) ($state ?? 0));
-                                        $set('hpp', $pricing['hpp']);
-                                        $set('harga_jual', $pricing['harga_jual']);
-                                    })
+                                    ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian)
                                     ->columnSpan([
-                                        'md' => 4, // Lebar sedang
+                                        'md' => 4,
                                         'xl' => 4,
                                     ]),
 
@@ -283,180 +298,94 @@ class PembelianResource extends BaseResource
                                     ->default('baru')
                                     ->native(false)
                                     ->required()
+                                    ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian)
                                     ->columnSpan([
                                         'md' => 2,
                                         'xl' => 2,
                                     ]),
 
+                                // R03: Qty - LOCKED saat edit
                                 TextInput::make('qty')
                                     ->label('Qty')
                                     ->numeric()
                                     ->minValue(1)
                                     ->default(1)
                                     ->required()
-                                    ->live(onBlur: true)
-                                    ->afterStateUpdated(function (Set $set, Get $get, ?int $state): void {
-                                        // Reset serials when qty changes
-                                        $qty = (int) ($state ?? 0);
-                                        $serials = $get('serials') ?? [];
-
-                                        // Adjust serials array to match qty
-                                        if (count($serials) > $qty) {
-                                            $serials = array_slice($serials, 0, $qty);
-                                        }
-                                        while (count($serials) < $qty) {
-                                            $serials[] = ['sn' => '', 'garansi' => ''];
-                                        }
-                                        $set('serials', $serials);
+                                    ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian)
+                                    ->live(debounce: '300ms')
+                                    ->afterStateUpdated(function (Set $set, Get $get) {
+                                        $qty = (int) ($get('qty') ?? 0);
+                                        $hpp = (int) ($get('hpp') ?? 0);
+                                        $set('subtotal', $qty * $hpp);
                                     })
                                     ->columnSpan([
                                         'md' => 1,
                                         'xl' => 1,
                                     ]),
 
+                                // R03: HPP - LOCKED saat edit
                                 TextInput::make('hpp')
                                     ->label('HPP (Beli)')
                                     ->numeric()
                                     ->prefix('Rp')
                                     ->currencyMask(thousandSeparator: '.', decimalSeparator: ',', precision: 0)
-                                    ->live()
-                                    ->placeholder(function (Get $get): ?string {
-                                        $pricing = self::getLastRecordedPricingForProduct((int) $get('id_produk'));
-                                        $value = $pricing['hpp'];
-
-                                        if (is_null($value)) {
-                                            return null;
-                                        }
-
-                                        return 'Rp ' . number_format((int) $value, 0, ',', '.');
+                                    ->placeholder('Masukkan HPP')
+                                    ->required()
+                                    ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian)
+                                    ->live(debounce: '300ms')
+                                    ->afterStateUpdated(function (Set $set, Get $get) {
+                                        $qty = (int) ($get('qty') ?? 0);
+                                        $hpp = (int) ($get('hpp') ?? 0);
+                                        $set('subtotal', $qty * $hpp);
                                     })
-                                    ->dehydrateStateUsing(function ($state, Get $get) {
-                                        if (filled($state)) {
-                                            return $state;
-                                        }
-
-                                        return self::getLastRecordedPricingForProduct((int) $get('id_produk'))['hpp'];
-                                    })
-                                    ->required(fn(Get $get): bool => filled($get('id_produk'))
-                                        && blank($get('hpp'))
-                                        && is_null(self::getLastRecordedPricingForProduct((int) $get('id_produk'))['hpp']))
                                     ->columnSpan([
                                         'md' => 2,
                                         'xl' => 2,
                                     ]),
 
+                                // R03: Harga Jual - LOCKED saat edit
                                 TextInput::make('harga_jual')
                                     ->label('Jual')
                                     ->numeric()
                                     ->prefix('Rp')
                                     ->currencyMask(thousandSeparator: '.', decimalSeparator: ',', precision: 0)
-                                    ->live()
-                                    ->placeholder(function (Get $get): ?string {
-                                        $pricing = self::getLastRecordedPricingForProduct((int) $get('id_produk'));
-                                        $value = $pricing['harga_jual'];
-
-                                        if (is_null($value)) {
-                                            return null;
-                                        }
-
-                                        return 'Rp ' . number_format((int) $value, 0, ',', '.');
-                                    })
-                                    ->dehydrateStateUsing(function ($state, Get $get) {
-                                        if (filled($state)) {
-                                            return $state;
-                                        }
-
-                                        return self::getLastRecordedPricingForProduct((int) $get('id_produk'))['harga_jual'];
-                                    })
-                                    ->required(fn(Get $get): bool => filled($get('id_produk'))
-                                        && blank($get('harga_jual'))
-                                        && is_null(self::getLastRecordedPricingForProduct((int) $get('id_produk'))['harga_jual']))
+                                    ->placeholder('Masukkan harga jual')
+                                    ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian)
                                     ->columnSpan([
                                         'md' => 2,
                                         'xl' => 2,
                                     ]),
 
-                                // Hidden field to store serial data
-                                Hidden::make('serials')
-                                    ->default([])
-                                    ->dehydrated(true),
-
-                                // Serial count display with modal action
-                                TextInput::make('serials_count')
-                                    ->label('SN & Garansi')
-                                    ->formatStateUsing(fn(Get $get): string => count(array_filter($get('serials') ?? [], fn($s) => ! empty($s['sn']))) . ' SN')
-                                    ->live()
-                                    ->disabled()
-                                    ->dehydrated(false)
-                                    ->suffixAction(
-                                        FormAction::make('manage_serials')
-                                            ->label('Isi')
-                                            ->icon('heroicon-o-qr-code')
-                                            ->button()
-                                            ->color('info')
-                                            ->modalHeading('Serial Number & Garansi')
-                                            ->modalWidth('2xl')
-                                            ->fillForm(function (Get $get): array {
-                                                $existingSerials = $get('serials') ?? [];
-                                                $qty = (int) ($get('qty') ?? 0);
-
-                                                // If we have existing serials, use them
-                                                if (count($existingSerials) > 0) {
-                                                    return ['serials_temp' => $existingSerials];
-                                                }
-
-                                                // Otherwise, create empty rows based on qty
-                                                $serials = [];
-                                                for ($i = 0; $i < $qty; $i++) {
-                                                    $serials[] = ['sn' => '', 'garansi' => ''];
-                                                }
-
-                                                return ['serials_temp' => $serials];
-                                            })
-                                            ->form([
-                                                TableRepeater::make('serials_temp')
-                                                    ->label('')
-                                                    ->schema([
-                                                        TextInput::make('sn')
-                                                            ->label('Serial Number')
-                                                            ->placeholder('Masukkan SN'),
-                                                        TextInput::make('garansi')
-                                                            ->label('Garansi')
-                                                            ->placeholder('Contoh: 1 Tahun'),
-                                                    ])
-                                                    ->defaultItems(0)
-                                                    ->addActionLabel('+ Tambah Serial')
-                                                    ->reorderable(false)
-                                                    ->colStyles([
-                                                        'sn' => 'width: 60%;',
-                                                        'garansi' => 'width: 40%;',
-                                                    ]),
-                                            ])
-                                            ->action(function (Set $set, array $data): void {
-                                                $set('serials', $data['serials_temp'] ?? []);
-                                            })
-                                            ->after(function (Set $set, Get $get): void {
-                                                // Force refresh of serials_count
-                                                $serials = $get('serials') ?? [];
-                                                $filledCount = count(array_filter($serials, fn($s) => ! empty($s['sn'])));
-                                                $set('serials_count', $filledCount . ' SN');
-                                            })
-                                    ),
+                                // R03: Subtotal - read-only
+                                TextInput::make('subtotal')
+                                    ->label('Subtotal')
+                                    ->numeric()
+                                    ->prefix('Rp')
+                                    ->currencyMask(thousandSeparator: '.', decimalSeparator: ',', precision: 0)
+                                    ->readOnly()
+                                    ->dehydrated(true)
+                                    ->columnSpan([
+                                        'md' => 2,
+                                        'xl' => 2,
+                                    ]),
 
                             ])
-                            ->cloneable()
                             ->itemLabel(fn(array $state): ?string => $state['id_produk'] ?? null ? 'Produk Terpilih' : null)
+                            // R05: Items boleh kosong
+                            ->minItems(0)
                             ->colStyles([
                                 'id_produk' => 'width: 30%;',
-                                'kondisi' => 'width: 12%;',
+                                'kondisi' => 'width: 10%;',
                                 'qty' => 'width: 8%;',
-                                'hpp' => 'width: 15%;',
-                                'harga_jual' => 'width: 15%;',
-                                'serials_count' => 'width: 20%;',
+                                'hpp' => 'width: 14%;',
+                                'harga_jual' => 'width: 14%;',
+                                'subtotal' => 'width: 16%;',
                             ]),
 
-                    ]),
+                    ])
+                    ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian),
 
+                // R09: Item Jasa juga LOCKED saat edit
                 FormsSection::make('Item Jasa')
                     ->description('Daftar jasa yang di beli')
                     ->icon('hugeicons-tools')
@@ -464,8 +393,11 @@ class PembelianResource extends BaseResource
                         TableRepeater::make('jasaItems')
                             ->relationship('jasaItems')
                             ->label('Pembelian Jasa')
-                            ->addActionLabel('+ Tambah Jasa')
-                            // ->disabled(fn (?Pembelian $record, string $operation): bool => $operation === 'edit' && $record?->isEditLocked())
+                            ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian)
+                            ->deletable(fn($livewire) => ! ($livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian))
+                            ->reorderable(fn($livewire) => ! ($livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian))
+                            ->addable(fn($livewire) => ! ($livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian))
+                            ->cloneable(false)
                             ->schema([
                                 Select::make('jasa_id')
                                     ->label('Jasa')
@@ -474,30 +406,28 @@ class PembelianResource extends BaseResource
                                     ->searchable()
                                     ->preload()
                                     ->required()
-                                    ->reactive()
-                                    ->afterStateUpdated(function (Set $set, ?int $state): void {
-                                        $set('harga', $state ? (int) (Jasa::query()->find($state)?->harga ?? 0) : null);
-                                    })
+                                    ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian)
                                     ->columnSpan(2),
                                 TextInput::make('qty')
                                     ->label('Qty')
                                     ->numeric()
                                     ->default(1)
                                     ->minValue(1)
-                                    ->default(1)
-                                    ->minValue(1)
                                     ->required()
-                                    ->live(onBlur: true),
+                                    ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian)
+                                    ->columnSpan(1),
                                 TextInput::make('harga')
                                     ->label('Tarif')
                                     ->numeric()
                                     ->prefix('Rp')
                                     ->currencyMask(thousandSeparator: '.', decimalSeparator: ',', precision: 0)
                                     ->required()
-                                    ->live(onBlur: true),
+                                    ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian)
+                                    ->columnSpan(1),
                                 TextInput::make('catatan')
                                     ->label('Catatan')
                                     ->placeholder('Opsional')
+                                    ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian)
                                     ->columnSpan(2),
                             ])
                             ->colStyles([
@@ -507,10 +437,10 @@ class PembelianResource extends BaseResource
                                 'catatan' => 'width: 35%;',
                             ])
                             ->columns(6)
-                            ->defaultItems(0) // Default 0 items
-                            ->collapsible()
-                            ->cloneable(),
-                    ]),
+                            ->defaultItems(0)
+                            ->collapsible(),
+                    ])
+                    ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\PembelianResource\Pages\EditPembelian),
 
                 FormsSection::make('Total')
                     ->schema([
@@ -538,20 +468,6 @@ class PembelianResource extends BaseResource
                             ->relationship('pembayaran')
                             ->minItems(0)
                             ->addActionLabel('Tambah Pembayaran')
-                            ->addable(function (Get $get) {
-                                $items = $get('items') ?? [];
-                                $jasaItems = $get('jasaItems') ?? [];
-                                $pembayaran = $get('pembayaran') ?? [];
-
-                                $totalBarang = collect($items)->sum(fn($item) => ((int) ($item['qty'] ?? 0)) * ((int) ($item['hpp'] ?? 0)));
-                                $totalJasa = collect($jasaItems)->sum(fn($item) => ((int) ($item['qty'] ?? 0)) * ((int) ($item['harga'] ?? 0)));
-                                $grandTotal = $totalBarang + $totalJasa;
-
-                                $totalPaid = collect($pembayaran)->sum(fn($p) => (int) ($p['jumlah'] ?? 0));
-
-                                return $totalPaid < $grandTotal;
-                            })
-                            ->live() // Update availability when fields change
                             ->childComponents([
                                 DatePicker::make('tanggal')
                                     ->label('Tanggal')
@@ -580,7 +496,7 @@ class PembelianResource extends BaseResource
                                     ->label('Jumlah')
                                     ->numeric()
                                     ->prefix('Rp')
-                                    ->currencyMask(thousandSeparator: '.', decimalSeparator: ',', precision: 0)->live(onBlur: true)
+                                    ->currencyMask(thousandSeparator: '.', decimalSeparator: ',', precision: 0)
                                     ->placeholder(function (Get $get) {
                                         $items = $get('../../items') ?? [];
                                         $jasaItems = $get('../../jasaItems') ?? [];
@@ -940,62 +856,35 @@ class PembelianResource extends BaseResource
                         'success' => 'ppn',
                         'gray' => 'non_ppn',
                     ]),
+                // R06: Hanya 2 status pembayaran - TEMPO dan LUNAS (tidak ada DP)
                 TextColumn::make('status_pembayaran')
-                    ->label('Pembayaran')
+                    ->label('Tipe')
                     ->badge()
                     ->state(function (Pembelian $record): string {
                         $grandTotal = (float) $record->calculateTotalPembelian();
                         $totalPaid = (float) ($record->pembayaran_sum_jumlah ?? 0);
 
-                        // TEMPO: No payment made
-                        if ($totalPaid == 0) {
-                            return 'TEMPO';
-                        }
-
-                        // LUNAS: Fully paid
+                        // R06: LUNAS = pembayaran >= grand total
                         if ($totalPaid >= $grandTotal) {
                             return 'LUNAS';
                         }
 
-                        // DP: Partial payment
-                        return 'DP';
+                        // R06: TEMPO = pembayaran < grand total (termasuk 0)
+                        return 'TEMPO';
                     })
                     ->color(fn(string $state): string => match ($state) {
                         'LUNAS' => 'success',
-                        'DP' => 'warning',
                         'TEMPO' => 'danger',
                         default => 'gray',
                     }),
-                TextColumn::make('items_serials')
-                    ->label('SN')
-                    ->toggleable(isToggledHiddenByDefault: true)
+                TextColumn::make('is_locked')
+                    ->label('Status')
+                    ->badge()
                     ->state(function (Pembelian $record): string {
-                        $allSerials = $record->items
-                            ->flatMap(fn($item) => collect($item->serials ?? [])->pluck('sn'))
-                            ->filter()
-                            ->values();
-
-                        if ($allSerials->isEmpty()) {
-                            return '-';
-                        }
-
-                        $serialsString = $allSerials->implode(', ');
-
-                        return \Illuminate\Support\Str::limit($serialsString, 9);
+                        return $record->is_locked ? 'Final' : 'Draft';
                     })
-                    ->wrap()
-                    ->tooltip(function (Pembelian $record): ?string {
-                        $allSerials = $record->items
-                            ->flatMap(fn($item) => collect($item->serials ?? [])->pluck('sn'))
-                            ->filter()
-                            ->values();
-
-                        return $allSerials->count() > 0 ? $allSerials->implode(', ') : null;
-                    })
-                    ->searchable(query: function (Builder $query, string $search): Builder {
-                        return $query->whereHas('items', function (Builder $q) use ($search): void {
-                            $q->whereRaw('LOWER(serials) LIKE ?', ['%' . strtolower($search) . '%']);
-                        });
+                    ->color(function (Pembelian $record): string {
+                        return $record->is_locked ? 'success' : 'warning';
                     })
                     ->toggleable(),
                 TextColumn::make('items_count')
@@ -1154,30 +1043,233 @@ class PembelianResource extends BaseResource
 
             ])
             ->actions([
+                // R16: Lock Final (Draft -> Final)
+                Action::make('lock')
+                    ->label('')
+                    ->icon('heroicon-m-lock-closed')
+                    ->tooltip('Lock Final')
+                    ->color('danger')
+                    ->visible(fn(Pembelian $record) => ! $record->is_locked)
+                    ->requiresConfirmation()
+                    ->modalHeading('Lock Pembelian')
+                    ->modalDescription('Pembelian akan terkunci permanen. Tidak ada yang bisa diubah lagi. Lanjutkan?')
+                    ->action(function (Pembelian $record) {
+                        try {
+                            $record->lockFinal();
+                            Notification::make()
+                                ->title('Pembelian berhasil di-lock')
+                                ->success()
+                                ->send();
+                        } catch (\Exception $e) {
+                            Notification::make()
+                                ->title('Gagal mengunci')
+                                ->body($e->getMessage())
+                                ->danger()
+                                ->send();
+                        }
+                    }),
+
                 Tables\Actions\ActionGroup::make([
                     Tables\Actions\ViewAction::make()
                         ->icon('heroicon-m-eye')
-                        ->color('primary')
+                        ->color('info')
                         ->tooltip('Lihat Detail'),
                     Tables\Actions\EditAction::make()
-                        ->label('Edit')
                         ->icon('heroicon-m-pencil-square')
-                        ->color('warning')
                         ->tooltip('Edit')
+                        ->visible(fn(Pembelian $record) => ! $record->is_locked)
                         ->action(function (Pembelian $record, \Filament\Tables\Actions\EditAction $action): void {
                             $livewire = $action->getLivewire();
                             $livewire->redirect(PembelianResource::getUrl('edit', ['record' => $record]));
                         }),
                     Tables\Actions\DeleteAction::make()
-                        ->icon('heroicon-m-trash'),
+                        ->icon('heroicon-m-trash')
+                        ->visible(fn() => auth()->user()?->hasRole('godmode'))
+                        ->modalCancelAction(false)
+                        ->requiresConfirmation()
+                        ->modalHeading(
+                            fn(Pembelian $record): string => $record->canDelete()
+                                ? 'Hapus Pembelian'
+                                : 'Tidak Bisa Dihapus'
+                        )
+                        ->modalIcon(
+                            fn(Pembelian $record): string => $record->canDelete()
+                                ? 'heroicon-o-trash'
+                                : 'heroicon-o-exclamation-triangle'
+                        )
+                        ->modalIconColor(
+                            fn(Pembelian $record): string => $record->canDelete()
+                                ? 'danger'
+                                : 'warning'
+                        )
+                        ->modalDescription(function (Pembelian $record): string {
+                            if ($record->canDelete()) {
+                                return 'Apakah Anda yakin ingin menghapus pembelian ' . $record->no_po . '? Tindakan ini tidak dapat dibatalkan.';
+                            }
 
+                            $reasons = [];
+
+                            if (! empty($record->no_tt)) {
+                                $reasons[] = '• Terikat Tukar Tambah: ' . $record->no_tt;
+                            }
+
+                            $notas = $record->getBlockedPenjualanReferences()->pluck('nota')->filter()->values();
+                            if ($notas->isNotEmpty()) {
+                                $reasons[] = '• Dipakai di penjualan: ' . $notas->implode(', ');
+                            }
+
+                            return implode("\n", $reasons) ?: 'Pembelian ini tidak dapat dihapus.';
+                        })
+                        ->modalSubmitAction(fn(Pembelian $record) => $record->canDelete() ? null : false)
+                        ->modalCancelActionLabel('Tutup')
+                        ->extraModalFooterActions(function (Pembelian $record): array {
+                            if ($record->canDelete()) {
+                                return [];
+                            }
+
+                            return $record->getBlockedPenjualanReferences()
+                                ->filter(fn(array $ref) => ! empty($ref['id']))
+                                ->map(function (array $ref, int $index) {
+                                    $nota = $ref['nota'] ?? null;
+                                    $label = $nota ? 'Lihat ' . $nota : 'Lihat Penjualan';
+
+                                    return StaticAction::make('viewPenjualan' . $index)
+                                        ->button()
+                                        ->label($label)
+                                        ->icon('heroicon-m-arrow-top-right-on-square')
+                                        ->url(PenjualanResource::getUrl('view', ['record' => $ref['id']]))
+                                        ->openUrlInNewTab()
+                                        ->color('warning');
+                                })
+                                ->values()
+                                ->all();
+                        }),
                 ])
                     ->label('Aksi')
                     ->tooltip('Aksi'),
             ])
             ->bulkActions([
                 Tables\Actions\BulkActionGroup::make([
-                    Tables\Actions\DeleteBulkAction::make(),
+                    Tables\Actions\BulkAction::make('delete')
+                        ->label('Hapus')
+                        ->icon('heroicon-m-trash')
+                        ->color('danger')
+                        ->visible(fn() => auth()->user()?->hasRole('godmode'))
+                        ->requiresConfirmation()
+                        ->modalCancelAction(false)
+                        ->modalHeading('⚠️ Hapus Pembelian')
+                        ->modalIcon('heroicon-o-trash')
+                        ->modalIconColor('danger')
+                        ->modalContent(function (\Illuminate\Database\Eloquent\Collection $records): \Illuminate\Support\HtmlString {
+                            $canDelete = $records->filter(fn(Pembelian $r) => $r->canDelete());
+                            $blocked   = $records->filter(fn(Pembelian $r) => ! $r->canDelete());
+
+                            $html = '<div class="space-y-4 text-sm">';
+
+                            if ($canDelete->isNotEmpty()) {
+                                $html .= '<div>';
+                                $html .= '<p class="font-semibold text-success-600 dark:text-success-400 mb-1">✅ Akan dihapus (' . $canDelete->count() . ')</p>';
+                                $html .= '<ul class="space-y-1 pl-3">';
+                                foreach ($canDelete as $r) {
+                                    $html .= '<li class="flex items-center gap-2">'
+                                        . '<span class="font-mono text-xs bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded">' . e($r->no_po) . '</span>'
+                                        . '</li>';
+                                }
+                                $html .= '</ul>';
+                                $html .= '</div>';
+                            }
+
+                            if ($blocked->isNotEmpty()) {
+                                $html .= '<div>';
+                                $html .= '<p class="font-semibold text-danger-600 dark:text-danger-400 mb-1">⛔ Tidak bisa dihapus (' . $blocked->count() . ')</p>';
+                                $html .= '<ul class="space-y-2 pl-3">';
+                                foreach ($blocked as $r) {
+                                    $reasons = [];
+                                    if (! empty($r->no_tt)) {
+                                        $reasons[] = '<span class="text-warning-600 dark:text-warning-400">Tukar Tambah: ' . e($r->no_tt) . '</span>';
+                                    }
+                                    $notas = $r->getBlockedPenjualanReferences()->pluck('nota')->filter()->implode(', ');
+                                    if ($notas) {
+                                        $reasons[] = '<span class="text-danger-600 dark:text-danger-400">Penjualan: ' . e($notas) . '</span>';
+                                    }
+                                    $html .= '<li>'
+                                        . '<span class="font-mono text-xs bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded">' . e($r->no_po) . '</span>';
+                                    if ($reasons) {
+                                        $html .= '<ul class="mt-1 pl-4 space-y-0.5">';
+                                        foreach ($reasons as $reason) {
+                                            $html .= '<li class="text-xs">— ' . $reason . '</li>';
+                                        }
+                                        $html .= '</ul>';
+                                    }
+                                    $html .= '</li>';
+                                }
+                                $html .= '</ul>';
+                                $html .= '</div>';
+                            }
+
+                            if ($canDelete->isEmpty()) {
+                                $html .= '<p class="text-center text-gray-500 dark:text-gray-400 text-xs pt-1">Tidak ada pembelian yang bisa dihapus dari pilihan ini.</p>';
+                            }
+
+                            $html .= '<div class="mt-4 p-3 bg-warning-50 dark:bg-warning-900/20 rounded-lg border border-warning-200 dark:border-warning-800">';
+                            $html .= '<p class="text-warning-800 dark:text-warning-200 text-xs"><strong>⚠️ Perhatian:</strong> Stok akan dikembalikan dan data terkait (StockBatch, StockMutation) akan dihapus. Tindakan ini tidak dapat dibatalkan.</p>';
+                            $html .= '</div>';
+
+                            $html .= '</div>';
+
+                            return new \Illuminate\Support\HtmlString($html);
+                        })
+                        ->form([
+                            \Filament\Forms\Components\TextInput::make('password')
+                                ->label('Konfirmasi Password')
+                                ->password()
+                                ->required()
+                                ->placeholder('Masukkan password akun Anda'),
+                        ])
+                        ->modalSubmitActionLabel('🔥 Hapus yang Bisa Dihapus')
+                        ->modalCancelActionLabel('Batal')
+                        ->deselectRecordsAfterCompletion()
+                        ->action(function (\Illuminate\Database\Eloquent\Collection $records, array $data): void {
+                            $user = auth()->user();
+
+                            if (! $user || ! \Illuminate\Support\Facades\Hash::check($data['password'], $user->password)) {
+                                \Filament\Notifications\Notification::make()
+                                    ->title('Password salah')
+                                    ->body('Password yang Anda masukkan tidak sesuai.')
+                                    ->danger()
+                                    ->send();
+
+                                return;
+                            }
+
+                            $deleted = 0;
+                            $skipped = 0;
+
+                            foreach ($records as $record) {
+                                if (! $record->canDelete()) {
+                                    $skipped++;
+                                    continue;
+                                }
+
+                                try {
+                                    $record->delete();
+                                    $deleted++;
+                                } catch (\Exception $e) {
+                                    $skipped++;
+                                }
+                            }
+
+                            $body = "Berhasil menghapus {$deleted} pembelian.";
+                            if ($skipped > 0) {
+                                $body .= " {$skipped} dilewati karena tidak bisa dihapus.";
+                            }
+
+                            \Filament\Notifications\Notification::make()
+                                ->title($deleted > 0 ? 'Hapus Selesai' : 'Tidak Ada yang Dihapus')
+                                ->body($body)
+                                ->color($deleted > 0 ? 'success' : 'warning')
+                                ->send();
+                        }),
                 ]),
             ]);
     }
@@ -1219,39 +1311,50 @@ class PembelianResource extends BaseResource
         return empty($tags) ? null : implode(', ', $tags);
     }
 
-    protected static function getLastRecordedPricingForProduct(int $productId): array
-    {
-        if ($productId < 1) {
-            return ['hpp' => null, 'harga_jual' => null];
-        }
-
-        $itemTable = (new PembelianItem)->getTable();
-        $purchaseTable = (new Pembelian)->getTable();
-        $productColumn = PembelianItem::productForeignKey();
-        $primaryKey = PembelianItem::primaryKeyColumn();
-
-        $lastItem = PembelianItem::query()
-            ->leftJoin($purchaseTable, $purchaseTable . '.id_pembelian', '=', $itemTable . '.id_pembelian')
-            ->where($itemTable . '.' . $productColumn, $productId)
-            ->orderByDesc($purchaseTable . '.tanggal')
-            ->orderByDesc($itemTable . '.' . $primaryKey)
-            ->select([
-                $itemTable . '.' . $primaryKey,
-                $itemTable . '.hpp',
-                $itemTable . '.harga_jual',
-            ])
-            ->first();
-
-        if (! $lastItem) {
-            return ['hpp' => null, 'harga_jual' => null];
-        }
-
-        $hpp = $lastItem->hpp;
-        $hargaJual = $lastItem->harga_jual;
-
-        return [
-            'hpp' => is_null($hpp) ? null : (int) $hpp,
-            'harga_jual' => is_null($hargaJual) ? null : (int) $hargaJual,
-        ];
-    }
+    /*
+     * [DEPRECATED - TIDAK DIGUNAKAN]
+     * Fungsi ini sebelumnya digunakan untuk auto-fill HPP dan Harga Jual
+     * berdasarkan harga terakhir pembelian produk.
+     * 
+     * Sekarang dihapus dari form karena Purchase Module Policy v1.1
+     * mengharuskan input manual untuk fleksibilitas harga.
+     * 
+     * Dibiarkan di sini untuk referensi jika diperlukan di masa depan.
+     * 
+     * protected static function getLastRecordedPricingForProduct(int $productId): array
+     * {
+     *     if ($productId < 1) {
+     *         return ['hpp' => null, 'harga_jual' => null];
+     *     }
+     *
+     *     $itemTable = (new PembelianItem)->getTable();
+     *     $purchaseTable = (new Pembelian)->getTable();
+     *     $productColumn = PembelianItem::productForeignKey();
+     *     $primaryKey = PembelianItem::primaryKeyColumn();
+     *
+     *     $lastItem = PembelianItem::query()
+     *         ->leftJoin($purchaseTable, $purchaseTable . '.id_pembelian', '=', $itemTable . '.id_pembelian')
+     *         ->where($itemTable . '.' . $productColumn, $productId)
+     *         ->orderByDesc($purchaseTable . '.tanggal')
+     *         ->orderByDesc($itemTable . '.' . $primaryKey)
+     *         ->select([
+     *             $itemTable . '.' . $primaryKey,
+     *             $itemTable . '.hpp',
+     *             $itemTable . '.harga_jual',
+     *         ])
+     *         ->first();
+     *
+     *     if (! $lastItem) {
+     *         return ['hpp' => null, 'harga_jual' => null];
+     *     }
+     *
+     *     $hpp = $lastItem->hpp;
+     *     $hargaJual = $lastItem->harga_jual;
+     *
+     *     return [
+     *         'hpp' => is_null($hpp) ? null : (int) $hpp,
+     *         'harga_jual' => is_null($hargaJual) ? null : (int) $hargaJual,
+     *     ];
+     * }
+     */
 }

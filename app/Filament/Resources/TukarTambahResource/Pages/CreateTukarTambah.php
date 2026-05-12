@@ -19,7 +19,6 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class CreateTukarTambah extends CreateRecord
@@ -28,20 +27,18 @@ class CreateTukarTambah extends CreateRecord
 
     protected static bool $canCreateAnother = false;
 
+    public string $saveMode = 'draft';
+
     protected function mutateFormDataBeforeCreate(array $data): array
     {
-        Log::info('TukarTambah: mutateFormDataBeforeCreate', [
-            'data_keys' => array_keys($data),
-            'no_nota' => $data['no_nota'] ?? 'NOT SET',
-            'tanggal' => $data['tanggal'] ?? 'NOT SET',
-            'id_karyawan' => $data['id_karyawan'] ?? 'NOT SET',
-            'id_member' => $data['id_member'] ?? 'NOT SET',
-        ]);
+        $rawState = $this->form->getRawState();
+        if (isset($rawState['pembayaran']) && is_array($rawState['pembayaran'])) {
+            $data['pembayaran'] = $rawState['pembayaran'];
+        }
 
         // Ensure no_nota is set
         if (empty($data['no_nota'])) {
             $data['no_nota'] = TukarTambah::generateNoNota();
-            Log::info('TukarTambah: Generated no_nota', ['no_nota' => $data['no_nota']]);
         }
 
         // VALIDASI: cek duplikat dan stok penjualan items
@@ -75,9 +72,6 @@ class CreateTukarTambah extends CreateRecord
             ]);
         }
 
-        $qtyColumn = PembelianItem::qtySisaColumn();
-        $productColumn = PembelianItem::productForeignKey();
-
         // Cek duplikat produk - tidak boleh ada produk+batch+kondisi yang sama persis
         $productKeys = [];
         foreach ($items as $index => $item) {
@@ -94,7 +88,6 @@ class CreateTukarTambah extends CreateRecord
                     $conditionInfo = $condition ? " (kondisi: {$condition})" : '';
                     $errorMessage = "Produk '{$productName}'{$conditionInfo}{$batchInfo} sudah ada di baris {$productKeys[$key]}. Hapus duplikat di baris ".($index + 1).'.';
 
-                    // Log validation error
                     ValidationLogger::logDuplicate(
                         sourceType: 'TukarTambah',
                         sourceAction: 'create',
@@ -152,34 +145,30 @@ class CreateTukarTambah extends CreateRecord
             $totalQtyMap[$key]['rows'][] = $index + 1;
         }
 
-        // Validasi stok tersedia
+        // Validasi stok tersedia menggunakan StockBatch (sama seperti Penjualan standar)
         foreach ($totalQtyMap as $group) {
             $productId = $group['product_id'];
-            $condition = $group['condition'];
             $batchId = $group['batch_id'];
             $requestedQty = $group['qty'];
             $rows = $group['rows'];
 
-            $query = PembelianItem::query()
-                ->where($productColumn, $productId)
-                ->where($qtyColumn, '>', 0);
+            $query = \App\Models\StockBatch::query()
+                ->whereHas('pembelianItem', function ($q) use ($productId) {
+                    $q->where('id_produk', $productId);
+                })
+                ->where('qty_available', '>', 0);
 
             if ($batchId > 0) {
-                $query->whereKey($batchId);
+                $query->where('pembelian_item_id', $batchId);
             }
 
-            if ($condition) {
-                $query->where('kondisi', $condition);
-            }
-
-            $availableQty = (int) $query->sum($qtyColumn);
+            $availableQty = (int) $query->sum('qty_available');
 
             if ($availableQty < $requestedQty) {
                 $productName = \App\Models\Produk::find($productId)?->nama_produk ?? 'Produk #'.$productId;
                 $rowInfo = count($rows) > 1 ? ' (baris: '.implode(', ', $rows).')' : '';
                 $errorMessage = "Stok tidak cukup untuk {$productName}{$rowInfo}. Tersedia: {$availableQty}, Dibutuhkan: {$requestedQty}";
 
-                // Log validation error
                 ValidationLogger::logStock(
                     sourceType: 'TukarTambah',
                     sourceAction: 'create',
@@ -189,7 +178,6 @@ class CreateTukarTambah extends CreateRecord
                     inputData: [
                         'product_id' => $productId,
                         'batch_id' => $batchId,
-                        'condition' => $condition,
                         'rows' => $rows,
                     ]
                 );
@@ -216,13 +204,6 @@ class CreateTukarTambah extends CreateRecord
 
     protected function handleRecordCreation(array $data): Model
     {
-        Log::info('TukarTambah: Starting record creation', [
-            'data_keys' => array_keys($data),
-            'has_penjualan' => isset($data['penjualan']),
-            'has_pembelian' => isset($data['pembelian']),
-            'has_unified_pembayaran' => isset($data['unified_pembayaran']),
-        ]);
-
         try {
             return DB::transaction(function () use ($data) {
                 $tanggal = $data['tanggal'] ?? now();
@@ -231,42 +212,8 @@ class CreateTukarTambah extends CreateRecord
                 $penjualanPayload = is_array($data['penjualan'] ?? null) ? $data['penjualan'] : [];
                 $pembelianPayload = is_array($data['pembelian'] ?? null) ? $data['pembelian'] : [];
 
-                Log::info('TukarTambah: Payload prepared', [
-                    'penjualan_items_count' => count($penjualanPayload['items'] ?? []),
-                    'pembelian_items_count' => count($pembelianPayload['items'] ?? []),
-                ]);
-
-                // Process unified payments and split them
-                $unifiedPayments = $data['unified_pembayaran'] ?? [];
-                $penjualanPayments = [];
-                $pembelianPayments = [];
-
-                foreach ($unifiedPayments as $payment) {
-                    if (! is_array($payment)) {
-                        continue;
-                    }
-
-                    $tipeTransaksi = $payment['tipe_transaksi'] ?? null;
-
-                    // Remove tipe_transaksi from payment data before saving
-                    $paymentData = $payment;
-                    unset($paymentData['tipe_transaksi']);
-
-                    if ($tipeTransaksi === 'penjualan') {
-                        $penjualanPayments[] = $paymentData;
-                    } elseif ($tipeTransaksi === 'pembelian') {
-                        $pembelianPayments[] = $paymentData;
-                    }
-                }
-
-                // Override pembayaran arrays with unified payments
-                $penjualanPayload['pembayaran'] = $penjualanPayments;
-                $pembelianPayload['pembayaran'] = $pembelianPayments;
-
                 // Generate TukarTambah nota number first
                 $ttNotaNumber = $data['no_nota'] ?? TukarTambah::generateNoNota();
-
-                Log::info('TukarTambah: Creating Penjualan', ['no_nota' => $ttNotaNumber]);
 
                 // Use TukarTambah nota for both Penjualan and Pembelian
                 $penjualan = Penjualan::query()->create([
@@ -279,8 +226,6 @@ class CreateTukarTambah extends CreateRecord
                     'sumber_transaksi' => 'tukar_tambah',
                 ]);
 
-                Log::info('TukarTambah: Penjualan created', ['id' => $penjualan->getKey()]);
-
                 $pembelian = Pembelian::query()->create([
                     'tanggal' => $tanggal,
                     'catatan' => $pembelianPayload['catatan'] ?? $catatan,
@@ -290,15 +235,18 @@ class CreateTukarTambah extends CreateRecord
                     'tipe_pembelian' => $pembelianPayload['tipe_pembelian'] ?? 'non_ppn',
                 ]);
 
-                Log::info('TukarTambah: Pembelian created', ['id' => $pembelian->getKey()]);
-
                 $this->createPenjualanItems($penjualan, $penjualanPayload['items'] ?? []);
                 $this->createPenjualanJasaItems($penjualan, $penjualanPayload['jasa_items'] ?? []);
                 $this->createPembelianItems($pembelian, $pembelianPayload['items'] ?? []);
-                $this->createPenjualanPembayaran($penjualan, $penjualanPayload['pembayaran'] ?? []);
-                $this->createPembelianPembayaran($pembelian, $pembelianPayload['pembayaran'] ?? []);
+                $allPayments = $data['pembayaran'] ?? [];
+                $penjualanPayments = collect($allPayments)->where('tipe', 'penjualan')->values()->all();
+                $pembelianPayments = collect($allPayments)->where('tipe', 'pembelian')->values()->all();
+                $this->createPenjualanPembayaran($penjualan, $penjualanPayments);
+                $this->createPembelianPembayaran($pembelian, $pembelianPayments);
 
-                Log::info('TukarTambah: Creating TukarTambah record');
+                // Determine status based on save mode
+                $isFinal = $this->saveMode === 'final';
+                $statusDokumen = $isFinal ? 'final' : 'draft';
 
                 // Create TukarTambah with the same nota
                 $tukarTambah = TukarTambah::query()->create([
@@ -306,19 +254,23 @@ class CreateTukarTambah extends CreateRecord
                     'tanggal' => $tanggal,
                     'catatan' => $catatan,
                     'id_karyawan' => $karyawanId,
+                    'status_dokumen' => $statusDokumen,
+                    'is_locked' => $isFinal,
+                    'posted_at' => $isFinal ? now() : null,
+                    'posted_by_id' => $isFinal ? auth()->id() : null,
                     'penjualan_id' => $penjualan->getKey(),
                     'pembelian_id' => $pembelian->getKey(),
                 ]);
 
-                Log::info('TukarTambah: Record created successfully', ['id' => $tukarTambah->getKey()]);
+                // If final mode, sync Penjualan & Pembelian status
+                if ($isFinal) {
+                    $penjualan->update(['status_dokumen' => 'final']);
+                    $pembelian->update(['is_locked' => true]);
+                }
 
                 return $tukarTambah;
             });
         } catch (\Exception $e) {
-            Log::error('TukarTambah: Error during record creation', [
-                'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
             throw $e;
         }
     }
@@ -333,11 +285,14 @@ class CreateTukarTambah extends CreateRecord
 
         $penjualanNota = $this->record->penjualan?->no_nota ?? '-';
         $pembelianNota = $this->record->pembelian?->no_po ?? '-';
+        $modeLabel = $this->saveMode === 'final' ? 'Final' : 'Draft';
+        $statusColor = $this->saveMode === 'final' ? 'success' : 'warning';
 
         Notification::make()
-            ->title('Tukar tambah baru dibuat')
+            ->title("Tukar tambah {$modeLabel} berhasil disimpan")
             ->body("Nota Penjualan: {$penjualanNota} • Nota Pembelian: {$pembelianNota}")
             ->icon('heroicon-o-check-circle')
+            ->{$statusColor}()
             ->actions([
                 Action::make('Lihat')
                     ->url(TukarTambahResource::getUrl('view', ['record' => $this->record])),
@@ -345,18 +300,35 @@ class CreateTukarTambah extends CreateRecord
             ->sendToDatabase($user);
     }
 
+    public function saveDraft(): void
+    {
+        $this->saveMode = 'draft';
+        $this->create();
+    }
+
+    public function saveFinal(): void
+    {
+        $this->saveMode = 'final';
+        $this->create();
+    }
+
     protected function getHeaderActions(): array
     {
         return [
-            $this->getCreateFormAction()
-                ->label('Buat')
-                ->icon('heroicon-o-plus')
-                ->formId('form'),
+            \Filament\Actions\Action::make('saveDraft')
+                ->label('Simpan Draft')
+                ->icon('heroicon-o-pencil')
+                ->color('warning')
+                ->action('saveDraft'),
+            \Filament\Actions\Action::make('saveFinal')
+                ->label('Simpan Final')
+                ->icon('heroicon-o-check-circle')
+                ->color('success')
+                ->action('saveFinal'),
             $this->getCancelFormAction()
                 ->label('Batal')
-                ->formId('form')
-                ->color('danger')
-                ->icon('heroicon-o-x-mark'),
+                ->icon('heroicon-o-x-mark')
+                ->color('danger'),
         ];
     }
 
@@ -403,59 +375,54 @@ class CreateTukarTambah extends CreateRecord
 
     protected function fulfillPenjualanWithBatch(Penjualan $penjualan, int $productId, int $qty, int $batchId, ?int $customPrice, ?string $condition, array $serials): void
     {
-        $qtyColumn = PembelianItem::qtySisaColumn();
-        $productColumn = PembelianItem::productForeignKey();
-
-        $batch = PembelianItem::query()
-            ->where($productColumn, $productId)
-            ->whereKey($batchId)
+        $stockBatch = \App\Models\StockBatch::query()
+            ->where('pembelian_item_id', $batchId)
             ->lockForUpdate()
             ->first();
 
-        if (! $batch) {
+        if (! $stockBatch) {
             throw ValidationException::withMessages([
-                'penjualan.items' => 'Batch pembelian tidak ditemukan.',
+                'penjualan.items' => 'Batch stok tidak ditemukan.',
             ]);
         }
 
-        $available = (int) ($batch->{$qtyColumn} ?? 0);
-
-        if ($available < $qty) {
+        if ($stockBatch->qty_available < $qty) {
             throw ValidationException::withMessages([
-                'penjualan.items' => "Stok batch tidak cukup. Tersedia: {$available}, Dibutuhkan: {$qty}",
+                'penjualan.items' => "Stok batch tidak cukup. Tersedia: {$stockBatch->qty_available}, Dibutuhkan: {$qty}",
             ]);
         }
+
+        // Stock decrement is handled by PenjualanItem::created model event
+        // Do NOT manually decrement here to avoid double-deduction
 
         $takeSerials = ! empty($serials) ? array_splice($serials, 0, $qty) : [];
 
         PenjualanItem::query()->create([
             'id_penjualan' => $penjualan->getKey(),
             'id_produk' => $productId,
-            'id_pembelian_item' => $batch->getKey(),
+            'id_pembelian_item' => $batchId,
             'qty' => $qty,
             'harga_jual' => $customPrice,
-            'kondisi' => $batch->kondisi,
+            'kondisi' => $stockBatch->pembelianItem?->kondisi ?? $condition,
             'serials' => empty($takeSerials) ? null : $takeSerials,
         ]);
     }
 
     protected function fulfillPenjualanUsingFifo(Penjualan $penjualan, int $productId, int $qty, ?int $customPrice, ?string $condition, array $serials): Collection
     {
-        $qtyColumn = PembelianItem::qtySisaColumn();
-        $productColumn = PembelianItem::productForeignKey();
-
-        $batchesQuery = PembelianItem::query()
-            ->where($productColumn, $productId)
-            ->where($qtyColumn, '>', 0)
-            ->orderBy('id_pembelian_item')
+        $batchesQuery = \App\Models\StockBatch::query()
+            ->whereHas('pembelianItem', function ($q) use ($productId, $condition) {
+                $q->where('id_produk', $productId);
+                if ($condition) {
+                    $q->where('kondisi', $condition);
+                }
+            })
+            ->where('qty_available', '>', 0)
+            ->orderBy('id')
             ->lockForUpdate();
 
-        if ($condition) {
-            $batchesQuery->where('kondisi', $condition);
-        }
-
         $batches = $batchesQuery->get();
-        $available = (int) $batches->sum(fn (PembelianItem $batch): int => (int) ($batch->{$qtyColumn} ?? 0));
+        $available = (int) $batches->sum(fn (\App\Models\StockBatch $batch): int => $batch->qty_available);
 
         if ($available < $qty) {
             throw ValidationException::withMessages([
@@ -467,12 +434,12 @@ class CreateTukarTambah extends CreateRecord
         $created = collect();
         $serials = array_values($serials);
 
-        foreach ($batches as $batch) {
+        foreach ($batches as $stockBatch) {
             if ($remaining <= 0) {
                 break;
             }
 
-            $batchAvailable = (int) ($batch->{$qtyColumn} ?? 0);
+            $batchAvailable = $stockBatch->qty_available;
 
             if ($batchAvailable <= 0) {
                 continue;
@@ -485,10 +452,13 @@ class CreateTukarTambah extends CreateRecord
                 $takeSerials = array_splice($serials, 0, $takeQty);
             }
 
+            // Stock decrement is handled by PenjualanItem::created model event
+            // Do NOT manually decrement here to avoid double-deduction
+
             $record = PenjualanItem::query()->create([
                 'id_penjualan' => $penjualan->getKey(),
                 'id_produk' => $productId,
-                'id_pembelian_item' => $batch->getKey(),
+                'id_pembelian_item' => $stockBatch->pembelian_item_id,
                 'qty' => $takeQty,
                 'harga_jual' => $customPrice,
                 'kondisi' => $condition,
@@ -541,47 +511,69 @@ class CreateTukarTambah extends CreateRecord
         }
     }
 
+    protected function normalizePaymentAmount(mixed $value): int
+    {
+        if (is_array($value)) {
+            $value = collect($value)
+                ->flatten()
+                ->filter(fn ($amount): bool => filled($amount))
+                ->first();
+        }
+
+        if (is_int($value)) {
+            return $value;
+        }
+
+        if (is_float($value)) {
+            return (int) $value;
+        }
+
+        $cleaned = preg_replace('/[^0-9]/', '', (string) ($value ?? ''));
+
+        return (int) ($cleaned ?: 0);
+    }
+
+    protected function normalizePaymentFilePath(mixed $value): ?string
+    {
+        if (is_string($value)) {
+            return $value === '' ? null : $value;
+        }
+
+        if (is_array($value)) {
+            $first = collect($value)
+                ->flatten()
+                ->filter(fn ($path): bool => is_string($path) && $path !== '')
+                ->first();
+
+            return $first ?: null;
+        }
+
+        return null;
+    }
+
     protected function createPenjualanPembayaran(Penjualan $penjualan, array $items): void
     {
-        Log::info('createPenjualanPembayaran called', ['items_count' => count($items), 'items' => $items]);
-
         foreach ($items as $item) {
             if (! is_array($item)) {
-                Log::warning('Penjualan Payment: Skipped non-array item', ['item' => $item]);
-
                 continue;
             }
 
             $metode = $item['metode_bayar'] ?? null;
-            $jumlah = $item['jumlah'] ?? null;
+            $jumlah = $this->normalizePaymentAmount($item['jumlah'] ?? null);
 
-            Log::info('Penjualan Payment: Processing', [
-                'metode' => $metode,
-                'jumlah' => $jumlah,
-                'jumlah_int' => (int) $jumlah,
-            ]);
-
-            // Skip if no payment method or amount
-            if (! $metode || $jumlah === null || $jumlah === '' || (int) $jumlah <= 0) {
-                Log::warning('Penjualan Payment: Skipped due to validation', [
-                    'metode' => $metode,
-                    'jumlah' => $jumlah,
-                ]);
-
+            if (! $metode || $jumlah <= 0) {
                 continue;
             }
 
-            $payment = PenjualanPembayaran::query()->create([
+            PenjualanPembayaran::query()->create([
                 'id_penjualan' => $penjualan->getKey(),
                 'tanggal' => $item['tanggal'] ?? now(),
                 'metode_bayar' => $metode,
                 'akun_transaksi_id' => $item['akun_transaksi_id'] ?? null,
-                'jumlah' => (int) $jumlah,
-                'bukti_transfer' => $item['bukti_transfer'] ?? null,
+                'jumlah' => $jumlah,
                 'catatan' => $item['catatan'] ?? null,
+                'bukti_transfer' => $this->normalizePaymentFilePath($item['bukti_transfer'] ?? null),
             ]);
-
-            Log::info('Penjualan Payment: Created', ['id' => $payment->id_penjualan_pembayaran, 'jumlah' => $payment->jumlah]);
         }
     }
 
@@ -593,10 +585,9 @@ class CreateTukarTambah extends CreateRecord
             }
 
             $metode = $item['metode_bayar'] ?? null;
-            $jumlah = $item['jumlah'] ?? null;
+            $jumlah = $this->normalizePaymentAmount($item['jumlah'] ?? null);
 
-            // Skip if no payment method or amount
-            if (! $metode || $jumlah === null || $jumlah === '' || (int) $jumlah <= 0) {
+            if (! $metode || $jumlah <= 0) {
                 continue;
             }
 
@@ -605,9 +596,9 @@ class CreateTukarTambah extends CreateRecord
                 'tanggal' => $item['tanggal'] ?? now(),
                 'metode_bayar' => $metode,
                 'akun_transaksi_id' => $item['akun_transaksi_id'] ?? null,
-                'jumlah' => (int) $jumlah,
-                'bukti_transfer' => $item['bukti_transfer'] ?? null,
+                'jumlah' => $jumlah,
                 'catatan' => $item['catatan'] ?? null,
+                'bukti_transfer' => $this->normalizePaymentFilePath($item['bukti_transfer'] ?? null),
             ]);
         }
     }

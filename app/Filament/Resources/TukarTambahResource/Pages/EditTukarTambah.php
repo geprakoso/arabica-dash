@@ -20,6 +20,7 @@ use Filament\Support\Enums\Alignment;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
 class EditTukarTambah extends EditRecord
@@ -35,13 +36,21 @@ class EditTukarTambah extends EditRecord
         return [];
     }
 
+    protected function getRedirectUrl(): string
+    {
+        return TukarTambahResource::getUrl('index');
+    }
+
     protected function getHeaderActions(): array
     {
+        $record = $this->record;
+
         return [
             $this->getSaveFormAction()
                 ->label('Simpan')
                 ->icon('heroicon-m-check-circle')
-                ->formId('form'),
+                ->formId('form')
+                ->disabled(fn() => ! $record->canEditItems() && ! $record->canEditPayment()),
             $this->getCancelFormAction()
                 ->label('Batal')
                 ->icon('heroicon-m-x-mark')
@@ -51,46 +60,180 @@ class EditTukarTambah extends EditRecord
                 ->label('Hapus')
                 ->icon('heroicon-m-trash')
                 ->color('danger')
+                ->visible(fn() => auth()->user()?->hasRole('godmode'))
                 ->requiresConfirmation()
-                ->modalHeading('Hapus Tukar Tambah')
-                ->modalDescription('Tukar tambah yang masih dipakai transaksi lain akan diblokir.')
-                ->action(function (): void {
-                    try {
-                        $this->record->delete();
+                ->modalHeading(fn() => $this->record->canDelete() ? 'Konfirmasi Hapus Tukar Tambah' : 'Tidak Bisa Dihapus')
+                ->modalIcon(fn() => $this->record->canDelete() ? 'heroicon-o-trash' : 'heroicon-o-exclamation-triangle')
+                ->modalIconColor(fn() => $this->record->canDelete() ? 'danger' : 'warning')
+                ->modalDescription(function (): string {
+                    $record = $this->record;
 
-                        // Tutup modal
-                        $this->dispatch('close-modal', id: 'delete');
+                    if (! $record->canDelete()) {
+                        $reasons = [];
 
-                        Notification::make()
-                            ->title('Tukar tambah dihapus')
-                            ->success()
-                            ->send();
+                        if ($record->isFinal()) {
+                            $reasons[] = '• Status sudah final, tidak bisa dihapus';
+                        }
+                        if ($record->is_locked) {
+                            $reasons[] = '• Transaksi sudah terkunci';
+                        }
 
-                        $this->redirect(TukarTambahResource::getUrl('index'));
-                    } catch (ValidationException $exception) {
-                        $messages = collect($exception->errors())
-                            ->flatten()
-                            ->implode(' ');
+                        $notas = $record->getExternalPenjualanReferences()->pluck('nota')->filter()->values();
+                        if ($notas->isNotEmpty()) {
+                            $reasons[] = '• Item pembelian dipakai di penjualan: ' . $notas->implode(', ');
+                        }
 
-                        $this->deleteBlockedMessage = $messages ?: 'Gagal menghapus tukar tambah.';
-                        $this->deleteBlockedPenjualanReferences = $this->record->getExternalPenjualanReferences()->all();
-
-                        // Tutup modal terlebih dahulu
-                        $this->dispatch('close-modal', id: 'delete');
-
-                        // Notifikasi toast untuk delete blocked
-                        Notification::make()
-                            ->title('Tidak Bisa Dihapus')
-                            ->body($this->deleteBlockedMessage)
-                            ->icon('heroicon-o-exclamation-triangle')
-                            ->danger()
-                            ->persistent()
-                            ->send();
-
-                        $this->replaceMountedAction('deleteBlocked');
+                        return implode("\n", $reasons) ?: 'Tukar tambah ini tidak dapat dihapus.';
                     }
+
+                    return 'Apakah Anda yakin ingin menghapus tukar tambah **' . $record->kode . '**? Langkah ini tidak dapat dibatalkan.';
+                })
+                ->modalSubmitAction(fn() => $this->record->canDelete() ? null : false)
+                ->modalCancelAction(fn(StaticAction $action) => $this->record->canDelete()
+                    ? $action->label('Batal')
+                    : $action->label('Tutup'))
+                ->extraModalFooterActions(function (): array {
+                    if ($this->record->canDelete()) {
+                        return [];
+                    }
+
+                    return $this->record->getExternalPenjualanReferences()
+                        ->filter(fn(array $ref) => ! empty($ref['id']))
+                        ->map(function (array $ref, int $index) {
+                            $nota = $ref['nota'] ?? null;
+                            $label = $nota ? 'Lihat ' . $nota : 'Lihat Penjualan';
+
+                            return StaticAction::make('viewPenjualan' . $index)
+                                ->button()
+                                ->label($label)
+                                ->icon('heroicon-m-arrow-top-right-on-square')
+                                ->url(PenjualanResource::getUrl('view', ['record' => $ref['id']]))
+                                ->openUrlInNewTab()
+                                ->color('warning');
+                        })
+                        ->values()
+                        ->all();
+                })
+                ->action(function (): void {
+                    if (! $this->record->canDelete()) {
+                        $this->replaceMountedAction('deleteBlocked');
+                        return;
+                    }
+
+                    $this->replaceMountedAction('deleteStep2');
                 }),
         ];
+    }
+
+    protected function deleteStep2Action(): Action
+    {
+        return Action::make('deleteStep2')
+            ->modalHeading('⚠️ Dampak Penghapusan')
+            ->modalDescription(function (): string {
+                $record = $this->record;
+                $desc = "**Anda akan menghapus tukar tambah {$record->kode}.**\n\n";
+
+                $penjualan = $record->penjualan;
+                if ($penjualan) {
+                    $desc .= "**Penjualan terkait:** {$penjualan->no_nota}\n";
+                    $itemsCount = $penjualan->items()->count();
+                    if ($itemsCount > 0) {
+                        $desc .= "- {$itemsCount} item penjualan akan dihapus\n";
+                    }
+                    $jasaCount = $penjualan->jasaItems()->count();
+                    if ($jasaCount > 0) {
+                        $desc .= "- {$jasaCount} item jasa akan dihapus\n";
+                    }
+                    $paymentCount = $penjualan->pembayaran()->count();
+                    if ($paymentCount > 0) {
+                        $desc .= "- {$paymentCount} data pembayaran penjualan akan dihapus\n";
+                    }
+                    $desc .= "\n";
+                }
+
+                $pembelian = $record->pembelian;
+                if ($pembelian) {
+                    $desc .= "**Pembelian terkait:** {$pembelian->no_po}\n";
+                    $itemsCount = $pembelian->items()->count();
+                    if ($itemsCount > 0) {
+                        $desc .= "- {$itemsCount} item pembelian akan dihapus\n";
+                    }
+                    $paymentCount = $pembelian->pembayaran()->count();
+                    if ($paymentCount > 0) {
+                        $desc .= "- {$paymentCount} data pembayaran pembelian akan dihapus\n";
+                    }
+                    $desc .= "\n";
+                }
+
+                $desc .= 'Apakah Anda yakin ingin melanjutkan?';
+
+                return $desc;
+            })
+            ->modalIcon('heroicon-o-exclamation-triangle')
+            ->modalIconColor('warning')
+            ->modalWidth('md')
+            ->modalSubmitActionLabel('Lanjutkan ke Konfirmasi Password')
+            ->modalCancelAction(false)
+            ->action(function (): void {
+                $this->replaceMountedAction('deleteStep3');
+            })
+            ->color('warning');
+    }
+
+    public function deleteStep3Action(): Action
+    {
+        return Action::make('deleteStep3')
+            ->modalHeading('🔐 Konfirmasi Password')
+            ->modalDescription('Masukkan password Anda untuk mengkonfirmasi penghapusan. Tindakan ini tidak dapat dibatalkan.')
+            ->modalIcon('heroicon-o-lock-closed')
+            ->modalIconColor('danger')
+            ->modalWidth('md')
+            ->form([
+                \Filament\Forms\Components\TextInput::make('password')
+                    ->label('Password')
+                    ->password()
+                    ->required()
+                    ->placeholder('Masukkan password akun Anda'),
+            ])
+            ->modalSubmitActionLabel('🔥 Hapus Tukar Tambah')
+            ->modalCancelAction(false)
+            ->action(function (array $data): void {
+                $user = auth()->user();
+
+                if (! $user || ! Hash::check($data['password'], $user->password)) {
+                    Notification::make()
+                        ->title('Password salah')
+                        ->body('Password yang Anda masukkan tidak sesuai.')
+                        ->danger()
+                        ->send();
+
+                    return;
+                }
+
+                try {
+                    $this->record->delete();
+                } catch (ValidationException $exception) {
+                    $messages = collect($exception->errors())
+                        ->flatten()
+                        ->implode(' ');
+
+                    Notification::make()
+                        ->title('Gagal menghapus')
+                        ->body($messages ?: 'Terjadi kesalahan saat menghapus.')
+                        ->danger()
+                        ->send();
+
+                    return;
+                }
+
+                Notification::make()
+                    ->title('Tukar tambah berhasil dihapus')
+                    ->success()
+                    ->send();
+
+                $this->redirect(TukarTambahResource::getUrl('index'));
+            })
+            ->color('danger');
     }
 
     protected function getFormActions(): array
@@ -102,27 +245,27 @@ class EditTukarTambah extends EditRecord
     {
         return Action::make('deleteBlocked')
             ->modalHeading('Gagal menghapus')
-            ->modalDescription(fn () => $this->deleteBlockedMessage ?? 'Gagal menghapus tukar tambah.')
+            ->modalDescription(fn() => $this->deleteBlockedMessage ?? 'Gagal menghapus tukar tambah.')
             ->modalIcon('heroicon-o-exclamation-triangle')
             ->modalIconColor('danger')
             ->modalWidth('md')
             ->modalAlignment(Alignment::Center)
-            ->modalFooterActions(fn () => $this->buildPenjualanFooterActions($this->deleteBlockedPenjualanReferences))
+            ->modalFooterActions(fn() => $this->buildPenjualanFooterActions($this->deleteBlockedPenjualanReferences))
             ->modalFooterActionsAlignment(Alignment::Center)
             ->modalSubmitAction(false)
-            ->modalCancelAction(fn (StaticAction $action) => $action->label('Tutup'))
+            ->modalCancelAction(fn(StaticAction $action) => $action->label('Tutup'))
             ->color('danger');
     }
 
     protected function buildPenjualanFooterActions(array $references): array
     {
         return collect($references)
-            ->filter(fn (array $reference) => ! empty($reference['id']))
+            ->filter(fn(array $reference) => ! empty($reference['id']))
             ->map(function (array $reference, int $index) {
                 $nota = $reference['nota'] ?? null;
-                $label = $nota ? 'Lihat '.$nota : 'Lihat Penjualan';
+                $label = $nota ? 'Lihat ' . $nota : 'Lihat Penjualan';
 
-                return StaticAction::make('viewPenjualan'.$index)
+                return StaticAction::make('viewPenjualan' . $index)
                     ->button()
                     ->label($label)
                     ->url(PenjualanResource::getUrl('view', ['record' => $reference['id'] ?? 0]))
@@ -162,6 +305,7 @@ class EditTukarTambah extends EditRecord
                         $serials = is_array($item->serials ?? null) ? $item->serials : [];
 
                         return [
+                            'id_penjualan_item' => $item->id_penjualan_item,
                             'id_produk' => $item->id_produk,
                             'id_pembelian_item' => $item->id_pembelian_item, // Added
                             'hpp' => (int) ($item->hpp ?? 0), // Added
@@ -174,18 +318,10 @@ class EditTukarTambah extends EditRecord
                     ->values()
                     ->all(),
                 'jasa_items' => $penjualan->jasaItems
-                    ->map(fn (PenjualanJasa $item): array => [
+                    ->map(fn(PenjualanJasa $item): array => [
                         'jasa_id' => $item->jasa_id,
                         'qty' => (int) ($item->qty ?? 0),
                         'harga' => (int) ($item->harga ?? 0),
-                    ])
-                    ->values()
-                    ->all(),
-                'pembayaran' => $penjualan->pembayaran
-                    ->map(fn (PenjualanPembayaran $item): array => [
-                        'metode_bayar' => $item->metode_bayar,
-                        'akun_transaksi_id' => $item->akun_transaksi_id,
-                        'jumlah' => (int) ($item->jumlah ?? 0),
                     ])
                     ->values()
                     ->all(),
@@ -215,49 +351,46 @@ class EditTukarTambah extends EditRecord
                     })
                     ->values()
                     ->all(),
-                'pembayaran' => $pembelian->pembayaran
-                    ->map(fn (PembelianPembayaran $item): array => [
-                        'metode_bayar' => $item->metode_bayar,
-                        'akun_transaksi_id' => $item->akun_transaksi_id,
-                        'jumlah' => (int) ($item->jumlah ?? 0),
-                    ])
-                    ->values()
-                    ->all(),
             ];
         }
 
-        // Populate unified_pembayaran
+        // Unified payments
         $unifiedPayments = [];
-
         if ($penjualan) {
-            foreach ($penjualan->pembayaran as $payment) {
-                $unifiedPayments[] = [
-                    'tipe_transaksi' => 'penjualan',
-                    'tanggal' => $payment->tanggal,
-                    'metode_bayar' => $payment->metode_bayar,
-                    'akun_transaksi_id' => $payment->akun_transaksi_id,
-                    'jumlah' => (int) $payment->jumlah,
-                    'bukti_transfer' => $payment->bukti_transfer,
-                    'catatan' => $payment->catatan,
-                ];
-            }
+            $unifiedPayments = array_merge(
+                $unifiedPayments,
+                $penjualan->pembayaran
+                    ->map(fn(PenjualanPembayaran $item): array => [
+                        'tipe' => 'penjualan',
+                        'tanggal' => $item->tanggal?->format('Y-m-d'),
+                        'metode_bayar' => $item->metode_bayar,
+                        'akun_transaksi_id' => $item->akun_transaksi_id,
+                        'jumlah' => (int) ($item->jumlah ?? 0),
+                        'bukti_transfer' => $item->bukti_transfer,
+                        'catatan' => $item->catatan,
+                    ])
+                    ->values()
+                    ->all()
+            );
         }
-
         if ($pembelian) {
-            foreach ($pembelian->pembayaran as $payment) {
-                $unifiedPayments[] = [
-                    'tipe_transaksi' => 'pembelian',
-                    'tanggal' => $payment->tanggal,
-                    'metode_bayar' => $payment->metode_bayar,
-                    'akun_transaksi_id' => $payment->akun_transaksi_id,
-                    'jumlah' => (int) $payment->jumlah,
-                    'bukti_transfer' => $payment->bukti_transfer,
-                    'catatan' => $payment->catatan,
-                ];
-            }
+            $unifiedPayments = array_merge(
+                $unifiedPayments,
+                $pembelian->pembayaran
+                    ->map(fn(PembelianPembayaran $item): array => [
+                        'tipe' => 'pembelian',
+                        'tanggal' => $item->tanggal?->format('Y-m-d'),
+                        'metode_bayar' => $item->metode_bayar,
+                        'akun_transaksi_id' => $item->akun_transaksi_id,
+                        'jumlah' => (int) ($item->jumlah ?? 0),
+                        'bukti_transfer' => $item->bukti_transfer,
+                        'catatan' => $item->catatan,
+                    ])
+                    ->values()
+                    ->all()
+            );
         }
-
-        $data['unified_pembayaran'] = $unifiedPayments;
+        $data['pembayaran'] = $unifiedPayments;
 
         // Populate id_member at root level for the form field
         if ($penjualan && $penjualan->id_member) {
@@ -269,6 +402,14 @@ class EditTukarTambah extends EditRecord
 
     protected function mutateFormDataBeforeSave(array $data): array
     {
+        $rawState = $this->form->getRawState();
+        if (isset($rawState['penjualan']['items']) && is_array($rawState['penjualan']['items'])) {
+            $data['penjualan']['items'] = $rawState['penjualan']['items'];
+        }
+        if (isset($rawState['pembayaran']) && is_array($rawState['pembayaran'])) {
+            $data['pembayaran'] = $rawState['pembayaran'];
+        }
+
         // VALIDASI: cek duplikat dan stok penjualan items
         $penjualanItems = $data['penjualan']['items'] ?? [];
         if (! empty($penjualanItems)) {
@@ -300,37 +441,35 @@ class EditTukarTambah extends EditRecord
             ]);
         }
 
-        $qtyColumn = PembelianItem::qtySisaColumn();
-        $productColumn = PembelianItem::productForeignKey();
-
         // Cek duplikat produk - tidak boleh ada produk+batch+kondisi yang sama persis
         $productKeys = [];
-        foreach ($items as $index => $item) {
+        $rowNumber = 0;
+        foreach ($items as $item) {
+            $rowNumber++;
             $productId = (int) ($item['id_produk'] ?? 0);
             $condition = $item['kondisi'] ?? null;
             $batchId = (int) ($item['id_pembelian_item'] ?? 0);
 
             if ($productId > 0) {
-                $key = $productId.'|'.($condition ?? '').'|'.$batchId;
+                $key = $productId . '|' . ($condition ?? '') . '|' . $batchId;
 
                 if (isset($productKeys[$key])) {
-                    $productName = \App\Models\Produk::find($productId)?->nama_produk ?? 'Produk #'.$productId;
+                    $productName = \App\Models\Produk::find($productId)?->nama_produk ?? 'Produk #' . $productId;
                     $batchInfo = $batchId > 0 ? ' (batch sama)' : '';
                     $conditionInfo = $condition ? " (kondisi: {$condition})" : '';
-                    $errorMessage = "Produk '{$productName}'{$conditionInfo}{$batchInfo} sudah ada di baris {$productKeys[$key]}. Hapus duplikat di baris ".($index + 1).'.';
+                    $errorMessage = "Produk '{$productName}'{$conditionInfo}{$batchInfo} sudah ada di baris {$productKeys[$key]}. Hapus duplikat di baris {$rowNumber}.";
 
-                    // Log validation error
                     ValidationLogger::logDuplicate(
                         sourceType: 'TukarTambah',
                         sourceAction: 'update',
                         productName: $productName,
-                        row: $index + 1,
+                        row: $rowNumber,
                         inputData: [
                             'product_id' => $productId,
                             'batch_id' => $batchId,
                             'condition' => $condition,
                             'duplicate_row' => $productKeys[$key],
-                            'current_row' => $index + 1,
+                            'current_row' => $rowNumber,
                         ]
                     );
 
@@ -346,23 +485,54 @@ class EditTukarTambah extends EditRecord
                         'penjualan.items' => $errorMessage,
                     ]);
                 }
-                $productKeys[$key] = $index + 1;
+                $productKeys[$key] = $rowNumber;
             }
         }
 
         // Aggregate total qty per produk (dengan batch dan kondisi)
         $totalQtyMap = [];
-        foreach ($items as $index => $item) {
+
+        // Kumpulkan existing item IDs untuk query qty yang sudah ter-alokasi di database
+        $existingItemIds = collect($items)
+            ->pluck('id_penjualan_item')
+            ->filter()
+            ->values()
+            ->all();
+
+        // Query qty yang sudah ter-alokasi dari database (bukan dari hidden field yang unreliable)
+        $existingAllocations = [];
+        if (! empty($existingItemIds)) {
+            $existingAllocations = \App\Models\PenjualanItem::whereIn('id_penjualan_item', $existingItemIds)
+                ->get()
+                ->keyBy('id_penjualan_item')
+                ->map(fn($item) => [
+                    'qty' => (int) $item->qty,
+                    'batch_id' => (int) $item->id_pembelian_item,
+                    'product_id' => (int) $item->id_produk,
+                ])
+                ->all();
+        }
+
+        $rowNumber = 0;
+        foreach ($items as $item) {
+            $rowNumber++;
             $productId = (int) ($item['id_produk'] ?? 0);
             $qty = (int) ($item['qty'] ?? 0);
             $condition = $item['kondisi'] ?? null;
             $batchId = (int) ($item['id_pembelian_item'] ?? 0);
+            $itemId = $item['id_penjualan_item'] ?? null;
+
+            // Ambil original qty dari database (bukan hidden field)
+            $originalQty = 0;
+            if ($itemId && isset($existingAllocations[$itemId])) {
+                $originalQty = $existingAllocations[$itemId]['qty'];
+            }
 
             if ($productId < 1 || $qty < 1) {
                 continue;
             }
 
-            $key = $productId.'|'.($condition ?? '').'|'.$batchId;
+            $key = $productId . '|' . ($condition ?? '') . '|' . $batchId;
 
             if (! isset($totalQtyMap[$key])) {
                 $totalQtyMap[$key] = [
@@ -370,41 +540,44 @@ class EditTukarTambah extends EditRecord
                     'condition' => $condition,
                     'batch_id' => $batchId,
                     'qty' => 0,
+                    'original_qty' => 0,
                     'rows' => [],
                 ];
             }
             $totalQtyMap[$key]['qty'] += $qty;
-            $totalQtyMap[$key]['rows'][] = $index + 1;
+            $totalQtyMap[$key]['original_qty'] += $originalQty;
+            $totalQtyMap[$key]['rows'][] = $rowNumber;
         }
 
-        // Validasi stok tersedia
+        // Validasi stok tersedia menggunakan StockBatch (sama seperti Penjualan standar)
         foreach ($totalQtyMap as $group) {
             $productId = $group['product_id'];
-            $condition = $group['condition'];
             $batchId = $group['batch_id'];
             $requestedQty = $group['qty'];
+            $originalQty = $group['original_qty'];
             $rows = $group['rows'];
 
-            $query = PembelianItem::query()
-                ->where($productColumn, $productId)
-                ->where($qtyColumn, '>', 0);
+            $query = \App\Models\StockBatch::query()
+                ->whereHas('pembelianItem', function ($q) use ($productId) {
+                    $q->where('id_produk', $productId);
+                })
+                ->where('qty_available', '>', 0);
 
             if ($batchId > 0) {
-                $query->whereKey($batchId);
+                $query->where('pembelian_item_id', $batchId);
             }
 
-            if ($condition) {
-                $query->where('kondisi', $condition);
-            }
+            $availableQty = (int) $query->sum('qty_available');
 
-            $availableQty = (int) $query->sum($qtyColumn);
+            // Tambahkan kembali qty yang sudah ter-alokasi untuk item ini
+            // (stok sudah dikurangi saat create, jadi perlu "dikembalikan" untuk validasi edit)
+            $availableQty += $originalQty;
 
             if ($availableQty < $requestedQty) {
-                $productName = \App\Models\Produk::find($productId)?->nama_produk ?? 'Produk #'.$productId;
-                $rowInfo = count($rows) > 1 ? ' (baris: '.implode(', ', $rows).')' : '';
+                $productName = \App\Models\Produk::find($productId)?->nama_produk ?? 'Produk #' . $productId;
+                $rowInfo = count($rows) > 1 ? ' (baris: ' . implode(', ', $rows) . ')' : '';
                 $errorMessage = "Stok tidak cukup untuk {$productName}{$rowInfo}. Tersedia: {$availableQty}, Dibutuhkan: {$requestedQty}";
 
-                // Log validation error
                 ValidationLogger::logStock(
                     sourceType: 'TukarTambah',
                     sourceAction: 'update',
@@ -414,7 +587,6 @@ class EditTukarTambah extends EditRecord
                     inputData: [
                         'product_id' => $productId,
                         'batch_id' => $batchId,
-                        'condition' => $condition,
                         'rows' => $rows,
                     ]
                 );
@@ -436,6 +608,13 @@ class EditTukarTambah extends EditRecord
 
     protected function handleRecordUpdate(Model $record, array $data): Model
     {
+        /** @var \App\Models\TukarTambah $record */
+        if ($record->is_locked) {
+            throw ValidationException::withMessages([
+                'status_dokumen' => 'Tukar Tambah sudah terkunci. Tidak bisa diubah.',
+            ]);
+        }
+
         return DB::transaction(function () use ($record, $data) {
             $tanggal = array_key_exists('tanggal', $data) ? $data['tanggal'] : $record->tanggal;
             $catatan = array_key_exists('catatan', $data) ? $data['catatan'] : $record->catatan;
@@ -443,33 +622,9 @@ class EditTukarTambah extends EditRecord
 
             $penjualanPayload = is_array($data['penjualan'] ?? null) ? $data['penjualan'] : [];
             $pembelianPayload = is_array($data['pembelian'] ?? null) ? $data['pembelian'] : [];
-
-            // Process unified payments and split them
-            $unifiedPayments = $data['unified_pembayaran'] ?? [];
-            $penjualanPayments = [];
-            $pembelianPayments = [];
-
-            foreach ($unifiedPayments as $payment) {
-                if (! is_array($payment)) {
-                    continue;
-                }
-
-                $tipeTransaksi = $payment['tipe_transaksi'] ?? null;
-
-                // Remove tipe_transaksi from payment data before saving
-                $paymentData = $payment;
-                unset($paymentData['tipe_transaksi']);
-
-                if ($tipeTransaksi === 'penjualan') {
-                    $penjualanPayments[] = $paymentData;
-                } elseif ($tipeTransaksi === 'pembelian') {
-                    $pembelianPayments[] = $paymentData;
-                }
-            }
-
-            // Override pembayaran arrays with unified payments
-            $penjualanPayload['pembayaran'] = $penjualanPayments;
-            $pembelianPayload['pembayaran'] = $pembelianPayments;
+            $allPayments = $data['pembayaran'] ?? [];
+            $penjualanPayments = collect($allPayments)->where('tipe', 'penjualan')->values()->all();
+            $pembelianPayments = collect($allPayments)->where('tipe', 'pembelian')->values()->all();
 
             $penjualan = $record->penjualan;
             if ($penjualan) {
@@ -482,7 +637,7 @@ class EditTukarTambah extends EditRecord
                     'no_nota' => $penjualanPayload['no_nota'] ?? $penjualan->no_nota,
                 ]);
 
-                $this->syncPenjualanDetails($penjualan, $penjualanPayload);
+                $this->syncPenjualanDetails($penjualan, $penjualanPayload, $penjualanPayments);
             }
 
             $pembelian = $record->pembelian;
@@ -496,7 +651,7 @@ class EditTukarTambah extends EditRecord
                     'tipe_pembelian' => $pembelianPayload['tipe_pembelian'] ?? $pembelian->tipe_pembelian,
                 ]);
 
-                $this->syncPembelianDetails($pembelian, $pembelianPayload, $penjualan?->getKey());
+                $this->syncPembelianDetails($pembelian, $pembelianPayload, $pembelianPayments, $penjualan?->getKey());
             }
 
             $record->update([
@@ -509,22 +664,94 @@ class EditTukarTambah extends EditRecord
         });
     }
 
-    protected function syncPenjualanDetails(Penjualan $penjualan, array $payload): void
+    protected function syncPenjualanDetails(Penjualan $penjualan, array $payload, array $payments = []): void
     {
-        $penjualan->items()->get()->each->delete();
-        $penjualan->jasaItems()->get()->each->delete();
-        $penjualan->pembayaran()->get()->each->delete();
+        $tukarTambah = $penjualan->tukarTambah;
+        $canEditItems = $tukarTambah?->canEditItems() ?? true;
+        $canEditPayment = $tukarTambah?->canEditPayment() ?? true;
 
-        $this->createPenjualanItems($penjualan, $payload['items'] ?? []);
-        $this->createPenjualanJasaItems($penjualan, $payload['jasa_items'] ?? []);
-        $this->createPenjualanPembayaran($penjualan, $payload['pembayaran'] ?? []);
+        if ($canEditItems) {
+            $incomingItems = $payload['items'] ?? [];
+
+            // Smart sync: compare existing vs incoming to avoid unnecessary delete-create cycles
+            // yang menyebabkan double stock mutation (return + re-deduction)
+            $existingItems = $penjualan->items()->get()->keyBy('id_penjualan_item');
+
+            $incomingIds = collect($incomingItems)
+                ->pluck('id_penjualan_item')
+                ->filter()
+                ->values()
+                ->all();
+
+            // 1. Hapus item yang tidak ada di form (user menghapus row)
+            $toDelete = $existingItems->keys()->diff($incomingIds);
+            foreach ($toDelete as $deleteId) {
+                $existingItems[$deleteId]->delete(); // stok kembali via PenjualanItem::deleted event
+            }
+
+            // 2. Update existing items atau create baru
+            foreach ($incomingItems as $itemData) {
+                $itemId = $itemData['id_penjualan_item'] ?? null;
+
+                if ($itemId && $existingItems->has($itemId)) {
+                    // Update existing item
+                    // PenjualanItem::updated event akan skip stock mutation jika batch+qty tidak berubah
+                    $existingItem = $existingItems[$itemId];
+                    $existingItem->update([
+                        'id_produk' => $itemData['id_produk'],
+                        'id_pembelian_item' => $itemData['id_pembelian_item'],
+                        'qty' => $itemData['qty'],
+                        'harga_jual' => ($itemData['harga_jual'] === '' || $itemData['harga_jual'] === null) ? null : (int) $itemData['harga_jual'],
+                        'kondisi' => $itemData['kondisi'] ?? null,
+                        'serials' => $itemData['serials'] ?? null,
+                    ]);
+                } else {
+                    // Create new item (stok dikurangi via PenjualanItem::created event)
+                    $productId = (int) ($itemData['id_produk'] ?? 0);
+                    $qty = (int) ($itemData['qty'] ?? 0);
+                    $batchId = (int) ($itemData['id_pembelian_item'] ?? 0);
+
+                    if ($productId < 1 || $qty < 1) {
+                        continue;
+                    }
+
+                    $customPrice = $itemData['harga_jual'] ?? null;
+                    $customPrice = ($customPrice === '' || $customPrice === null) ? null : (int) $customPrice;
+                    $condition = $itemData['kondisi'] ?? null;
+                    $serials = is_array($itemData['serials'] ?? null) ? array_values($itemData['serials']) : [];
+
+                    DB::transaction(function () use ($penjualan, $productId, $qty, $batchId, $customPrice, $condition, $serials): void {
+                        if ($batchId > 0) {
+                            $this->fulfillPenjualanWithBatch($penjualan, $productId, $qty, $batchId, $customPrice, $condition, $serials);
+                        } else {
+                            $this->fulfillPenjualanUsingFifo($penjualan, $productId, $qty, $customPrice, $condition, $serials);
+                        }
+                    });
+                }
+            }
+
+            // Jasa items: tetap delete-recreate (tidak ada stock impact)
+            $penjualan->jasaItems()->get()->each->delete();
+            $this->createPenjualanJasaItems($penjualan, $payload['jasa_items'] ?? []);
+        }
+
+        if ($canEditPayment) {
+            $penjualan->pembayaran()->get()->each->delete();
+            $this->createPenjualanPembayaran($penjualan, $payments);
+        }
 
         $penjualan->recalculateTotals();
         $penjualan->recalculatePaymentStatus();
     }
 
-    protected function syncPembelianDetails(Pembelian $pembelian, array $payload, ?int $penjualanId): void
+    protected function syncPembelianDetails(Pembelian $pembelian, array $payload, array $payments, ?int $penjualanId): void
     {
+        $tukarTambah = $pembelian->tukarTambah;
+        $canEditPayment = $tukarTambah?->canEditPayment() ?? true;
+
+        // Pembelian items SELALU locked di TT (mengikuti kebijakan Pembelian standar)
+        // Tidak pernah bisa dihapus/dibuat ulang saat edit
+
         $externalPenjualanNotas = $pembelian->items()
             ->whereHas('penjualanItems', function ($query) use ($penjualanId): void {
                 if ($penjualanId) {
@@ -533,33 +760,28 @@ class EditTukarTambah extends EditRecord
             })
             ->with(['penjualanItems.penjualan'])
             ->get()
-            ->flatMap(fn (PembelianItem $item) => $item->penjualanItems)
-            ->filter(fn ($item) => ! $penjualanId || (int) $item->id_penjualan !== $penjualanId)
-            ->map(fn ($item) => $item->penjualan?->no_nota)
+            ->flatMap(fn(PembelianItem $item) => $item->penjualanItems)
+            ->filter(fn($item) => ! $penjualanId || (int) $item->id_penjualan !== $penjualanId)
+            ->map(fn($item) => $item->penjualan?->no_nota)
             ->filter()
             ->unique()
             ->values();
 
         if ($externalPenjualanNotas->isNotEmpty()) {
-            $pembelian->pembayaran()->get()->each->delete();
-            $this->createPembelianPembayaran($pembelian, $payload['pembayaran'] ?? []);
+            // Jika item pembelian sudah dipakai di penjualan luar, hanya update pembayaran jika boleh
+            if ($canEditPayment) {
+                $pembelian->pembayaran()->get()->each->delete();
+                $this->createPembelianPembayaran($pembelian, $payments);
+            }
 
             return;
         }
 
-        // if ($externalPenjualanNotas->isNotEmpty()) {
-        //     $notaList = $externalPenjualanNotas->implode(', ');
-        //
-        //     throw ValidationException::withMessages([
-        //         'pembelian.items' => 'Item pembelian sudah terpakai di transaksi lain. Edit tukar tambah diblokir. Nota: ' . $notaList . '.',
-        //     ]);
-        // }
-
-        $pembelian->items()->get()->each->delete();
-        $pembelian->pembayaran()->get()->each->delete();
-
-        $this->createPembelianItems($pembelian, $payload['items'] ?? []);
-        $this->createPembelianPembayaran($pembelian, $payload['pembayaran'] ?? []);
+        // Hanya update pembayaran, items tidak pernah dihapus (locked)
+        if ($canEditPayment) {
+            $pembelian->pembayaran()->get()->each->delete();
+            $this->createPembelianPembayaran($pembelian, $payments);
+        }
     }
 
     protected function createPenjualanItems(Penjualan $penjualan, array $items): void
@@ -600,63 +822,58 @@ class EditTukarTambah extends EditRecord
 
     protected function fulfillPenjualanWithBatch(Penjualan $penjualan, int $productId, int $qty, int $batchId, ?int $customPrice, ?string $condition, array $serials): void
     {
-        $qtyColumn = PembelianItem::qtySisaColumn();
-        $productColumn = PembelianItem::productForeignKey();
-
-        $batch = PembelianItem::query()
-            ->where($productColumn, $productId)
-            ->whereKey($batchId)
+        $stockBatch = \App\Models\StockBatch::query()
+            ->where('pembelian_item_id', $batchId)
             ->lockForUpdate()
             ->first();
 
-        if (! $batch) {
+        if (! $stockBatch) {
             throw ValidationException::withMessages([
-                'penjualan.items' => 'Batch pembelian tidak ditemukan.',
+                'penjualan.items' => 'Batch stok tidak ditemukan.',
             ]);
         }
 
-        $available = (int) ($batch->{$qtyColumn} ?? 0);
-
-        if ($available < $qty) {
+        if ($stockBatch->qty_available < $qty) {
             throw ValidationException::withMessages([
-                'penjualan.items' => "Stok batch tidak cukup. Tersedia: {$available}, Dibutuhkan: {$qty}",
+                'penjualan.items' => "Stok batch tidak cukup. Tersedia: {$stockBatch->qty_available}, Dibutuhkan: {$qty}",
             ]);
         }
+
+        // Stock decrement is handled by PenjualanItem::created model event
+        // Do NOT manually decrement here to avoid double-deduction
 
         $takeSerials = ! empty($serials) ? array_splice($serials, 0, $qty) : [];
 
         PenjualanItem::query()->create([
             'id_penjualan' => $penjualan->getKey(),
             'id_produk' => $productId,
-            'id_pembelian_item' => $batch->getKey(),
+            'id_pembelian_item' => $batchId,
             'qty' => $qty,
             'harga_jual' => $customPrice,
-            'kondisi' => $batch->kondisi,
+            'kondisi' => $stockBatch->pembelianItem?->kondisi ?? $condition,
             'serials' => empty($takeSerials) ? null : $takeSerials,
         ]);
     }
 
     protected function fulfillPenjualanUsingFifo(Penjualan $penjualan, int $productId, int $qty, ?int $customPrice, ?string $condition, array $serials): Collection
     {
-        $qtyColumn = PembelianItem::qtySisaColumn();
-        $productColumn = PembelianItem::productForeignKey();
-
-        $batchesQuery = PembelianItem::query()
-            ->where($productColumn, $productId)
-            ->where($qtyColumn, '>', 0)
-            ->orderBy('id_pembelian_item')
+        $batchesQuery = \App\Models\StockBatch::query()
+            ->whereHas('pembelianItem', function ($q) use ($productId, $condition) {
+                $q->where('id_produk', $productId);
+                if ($condition) {
+                    $q->where('kondisi', $condition);
+                }
+            })
+            ->where('qty_available', '>', 0)
+            ->orderBy('id')
             ->lockForUpdate();
 
-        if ($condition) {
-            $batchesQuery->where('kondisi', $condition);
-        }
-
         $batches = $batchesQuery->get();
-        $available = (int) $batches->sum(fn (PembelianItem $batch): int => (int) ($batch->{$qtyColumn} ?? 0));
+        $available = (int) $batches->sum(fn(\App\Models\StockBatch $batch): int => $batch->qty_available);
 
         if ($available < $qty) {
             throw ValidationException::withMessages([
-                'penjualan.items' => 'Qty melebihi stok tersedia ('.$available.').',
+                'penjualan.items' => 'Qty melebihi stok tersedia (' . $available . ').',
             ]);
         }
 
@@ -664,12 +881,12 @@ class EditTukarTambah extends EditRecord
         $created = collect();
         $serials = array_values($serials);
 
-        foreach ($batches as $batch) {
+        foreach ($batches as $stockBatch) {
             if ($remaining <= 0) {
                 break;
             }
 
-            $batchAvailable = (int) ($batch->{$qtyColumn} ?? 0);
+            $batchAvailable = $stockBatch->qty_available;
 
             if ($batchAvailable <= 0) {
                 continue;
@@ -682,10 +899,13 @@ class EditTukarTambah extends EditRecord
                 $takeSerials = array_splice($serials, 0, $takeQty);
             }
 
+            // Stock decrement is handled by PenjualanItem::created model event
+            // Do NOT manually decrement here to avoid double-deduction
+
             $record = PenjualanItem::query()->create([
                 'id_penjualan' => $penjualan->getKey(),
                 'id_produk' => $productId,
-                'id_pembelian_item' => $batch->getKey(),
+                'id_pembelian_item' => $stockBatch->pembelian_item_id,
                 'qty' => $takeQty,
                 'harga_jual' => $customPrice,
                 'kondisi' => $condition,
@@ -746,9 +966,9 @@ class EditTukarTambah extends EditRecord
             }
 
             $metode = $item['metode_bayar'] ?? null;
-            $jumlah = $item['jumlah'] ?? null;
+            $jumlah = $this->normalizePaymentAmount($item['jumlah'] ?? null);
 
-            if (! $metode || $jumlah === null || $jumlah === '') {
+            if (! $metode || $jumlah <= 0) {
                 continue;
             }
 
@@ -757,9 +977,9 @@ class EditTukarTambah extends EditRecord
                 'tanggal' => $item['tanggal'] ?? now(),
                 'metode_bayar' => $metode,
                 'akun_transaksi_id' => $item['akun_transaksi_id'] ?? null,
-                'jumlah' => (int) $jumlah,
+                'jumlah' => $jumlah,
                 'catatan' => $item['catatan'] ?? null,
-                'bukti_transfer' => $item['bukti_transfer'] ?? null,
+                'bukti_transfer' => $this->normalizePaymentFilePath($item['bukti_transfer'] ?? null),
             ]);
         }
     }
@@ -772,9 +992,9 @@ class EditTukarTambah extends EditRecord
             }
 
             $metode = $item['metode_bayar'] ?? null;
-            $jumlah = $item['jumlah'] ?? null;
+            $jumlah = $this->normalizePaymentAmount($item['jumlah'] ?? null);
 
-            if (! $metode || $jumlah === null || $jumlah === '') {
+            if (! $metode || $jumlah <= 0) {
                 continue;
             }
 
@@ -783,11 +1003,51 @@ class EditTukarTambah extends EditRecord
                 'tanggal' => $item['tanggal'] ?? now(),
                 'metode_bayar' => $metode,
                 'akun_transaksi_id' => $item['akun_transaksi_id'] ?? null,
-                'jumlah' => (int) $jumlah,
+                'jumlah' => $jumlah,
                 'catatan' => $item['catatan'] ?? null,
-                'bukti_transfer' => $item['bukti_transfer'] ?? null,
+                'bukti_transfer' => $this->normalizePaymentFilePath($item['bukti_transfer'] ?? null),
             ]);
         }
+    }
+
+    protected function normalizePaymentAmount(mixed $value): int
+    {
+        if (is_array($value)) {
+            $value = collect($value)
+                ->flatten()
+                ->filter(fn($amount): bool => filled($amount))
+                ->first();
+        }
+
+        if (is_int($value)) {
+            return $value;
+        }
+
+        if (is_float($value)) {
+            return (int) $value;
+        }
+
+        $cleaned = preg_replace('/[^0-9]/', '', (string) ($value ?? ''));
+
+        return (int) ($cleaned ?: 0);
+    }
+
+    protected function normalizePaymentFilePath(mixed $value): ?string
+    {
+        if (is_string($value)) {
+            return $value === '' ? null : $value;
+        }
+
+        if (is_array($value)) {
+            $first = collect($value)
+                ->flatten()
+                ->filter(fn($path): bool => is_string($path) && $path !== '')
+                ->first();
+
+            return $first ?: null;
+        }
+
+        return null;
     }
 
     protected function createPenjualanJasaItems(Penjualan $penjualan, array $items): void

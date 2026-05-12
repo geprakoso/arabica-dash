@@ -40,12 +40,14 @@ use Filament\Infolists\Infolist;
 use Filament\Support\Enums\FontWeight;
 use Filament\Tables;
 use Filament\Tables\Actions\Action;
+use Filament\Tables\Actions\StaticAction;
 use Filament\Tables\Columns\ImageColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Icetalker\FilamentTableRepeater\Forms\Components\TableRepeater;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 
 class TukarTambahResource extends BaseResource
@@ -87,7 +89,7 @@ class TukarTambahResource extends BaseResource
                             ->schema([
                                 TextInput::make('no_nota')
                                     ->label('No. Nota Utama')
-                                    ->default(fn () => TukarTambah::generateNoNota())
+                                    ->default(fn() => TukarTambah::generateNoNota())
                                     ->disabled()
                                     ->dehydrated()
                                     ->required()
@@ -111,7 +113,7 @@ class TukarTambahResource extends BaseResource
                                     ->relationship('karyawan', 'nama_karyawan')
                                     ->searchable()
                                     ->preload()
-                                    ->default(fn () => Auth::user()?->karyawan?->id)
+                                    ->default(fn() => Auth::user()?->karyawan?->id)
                                     ->required()
                                     ->validationMessages([
                                         'required' => 'Perlu diisi',
@@ -120,7 +122,7 @@ class TukarTambahResource extends BaseResource
                                     ->columnSpan(1),
                                 Select::make('id_member')
                                     ->label('Pelanggan')
-                                    ->options(fn () => Member::query()
+                                    ->options(fn() => Member::query()
                                         ->orderBy('nama_member')
                                         ->pluck('nama_member', 'id')
                                         ->all())
@@ -132,7 +134,7 @@ class TukarTambahResource extends BaseResource
                                     ])
                                     ->prefixIcon('heroicon-m-user')
                                     ->createOptionModalHeading('Tambah Member')
-                                    ->createOptionAction(fn ($action) => $action->label('Tambah Member'))
+                                    ->createOptionAction(fn($action) => $action->label('Tambah Member'))
                                     ->createOptionForm([
                                         TextInput::make('nama_member')
                                             ->label('Nama Lengkap')
@@ -157,7 +159,7 @@ class TukarTambahResource extends BaseResource
                                                 ->nullable(),
                                         ]),
                                     ])
-                                    ->createOptionUsing(fn (array $data): int => (int) Member::query()->create($data)->getKey())
+                                    ->createOptionUsing(fn(array $data): int => (int) Member::query()->create($data)->getKey())
                                     ->columnSpan(1),
 
                             ]),
@@ -186,19 +188,24 @@ class TukarTambahResource extends BaseResource
                                 Group::make()
                                     ->statePath('penjualan')
                                     ->schema([
-                                        // Section::make('Data Penjualan')
-                                        //     ->description('Informasi pelanggan dan sales')
-                                        //     ->icon('heroicon-m-user-group')
-                                        //     ->schema([
-                                        //         Grid::make(2)
-                                        //             ->schema([
-                                        //             ]),
-                                        //     ])
-                                        //     ->compact(),
+                                        TextInput::make('diskon_total')
+                                            ->label('Diskon Penjualan')
+                                            ->prefix('Rp')
+                                            ->currencyMask(thousandSeparator: '.', decimalSeparator: ',', precision: 0)
+                                            ->default(0)
+                                            ->helperText('Diskon untuk barang keluar')
+                                            ->dehydrateStateUsing(function ($state) {
+                                                $cleaned = preg_replace('/[^0-9]/', '', (string) $state);
+                                                return (int) $cleaned;
+                                            }),
 
                                         TableRepeater::make('items')
                                             ->label('Daftar Barang Keluar')
                                             ->addActionLabel('+ Tambah Barang')
+                                            ->addable(fn($livewire) => ! ($livewire->record instanceof \App\Models\TukarTambah) || $livewire->record->canEditItems())
+                                            ->disabled(fn($livewire) => $livewire->record instanceof \App\Models\TukarTambah && ! $livewire->record->canEditItems())
+                                            ->deletable(fn($livewire) => ! ($livewire->record instanceof \App\Models\TukarTambah) || $livewire->record->canEditItems())
+                                            ->reorderable(false)
                                             ->reactive()
                                             ->afterStateUpdated(function (Set $set, Get $get): void {
                                                 // Update total items count
@@ -240,6 +247,10 @@ class TukarTambahResource extends BaseResource
                                             ->schema([
                                                 Select::make('id_produk')
                                                     ->label('Produk')
+                                                    ->disabled(function (Get $get): bool {
+                                                        return filled($get('id_penjualan_item'));
+                                                    })
+                                                    ->dehydrated(true)
                                                     ->options(function (Get $get): array {
                                                         $options = \App\Filament\Resources\PenjualanResource::getAvailableProductOptions();
                                                         $currentId = $get('id_produk');
@@ -271,13 +282,15 @@ class TukarTambahResource extends BaseResource
                                                             if ($batch) {
                                                                 $set('harga_jual', $batch->harga_jual);
                                                                 $set('hpp', $batch->hpp);
-                                                                $set('kondisi', $batch->kondisi);
-                                                                $set('id_pembelian_item', $batch->getKey());
                                                             }
                                                         }
                                                     }),
                                                 Select::make('kondisi')
                                                     ->label('Kondisi')
+                                                    ->disabled(function (Get $get): bool {
+                                                        return filled($get('id_penjualan_item'));
+                                                    })
+                                                    ->dehydrated(true)
                                                     ->options(function (Get $get): array {
                                                         $productId = (int) ($get('id_produk') ?? 0);
 
@@ -295,7 +308,6 @@ class TukarTambahResource extends BaseResource
                                                             if ($batch) {
                                                                 $set('harga_jual', $batch->harga_jual);
                                                                 $set('hpp', $batch->hpp);
-                                                                $set('id_pembelian_item', $batch->getKey());
                                                             }
                                                         }
                                                     }),
@@ -305,13 +317,40 @@ class TukarTambahResource extends BaseResource
                                                         $productId = (int) ($get('id_produk') ?? 0);
                                                         $condition = $get('kondisi');
 
-                                                        return \App\Filament\Resources\PenjualanResource::getBatchOptions($productId, $condition);
+                                                        $options = \App\Filament\Resources\PenjualanResource::getBatchOptions($productId, $condition);
+
+                                                        // Pastikan batch yang sedang dipilih tetap muncul dengan label deskriptif
+                                                        // meskipun stoknya sudah 0 atau tidak masuk dalam filter
+                                                        $currentBatchId = (int) ($get('id_pembelian_item') ?? 0);
+                                                        if ($currentBatchId > 0 && ! isset($options[$currentBatchId])) {
+                                                            $batch = PembelianItem::query()
+                                                                ->with('pembelian')
+                                                                ->find($currentBatchId);
+
+                                                            if ($batch) {
+                                                                $labelParts = [
+                                                                    $batch->pembelian?->no_po ? '#' . $batch->pembelian->no_po : 'Batch #' . $currentBatchId,
+                                                                    'Qty: ' . number_format($batch->qty ?? 0, 0, ',', '.'),
+                                                                    'HPP: Rp ' . number_format((int) ($batch->hpp ?? 0), 0, ',', '.'),
+                                                                ];
+                                                                $options[$currentBatchId] = implode(' | ', array_filter($labelParts));
+                                                            }
+                                                        }
+
+                                                        return $options;
                                                     })
                                                     ->native(false)
                                                     ->searchable()
                                                     ->preload()
                                                     ->reactive()
-                                                    ->disabled(fn (Get $get): bool => ! $get('id_produk'))
+                                                    ->disabled(function (Get $get): bool {
+                                                        if (! $get('id_produk')) {
+                                                            return true;
+                                                        }
+
+                                                        return filled($get('id_penjualan_item'));
+                                                    })
+                                                    ->dehydrated(true)
                                                     ->placeholder('Pilih Batch')
                                                     ->afterStateUpdated(function (Set $set, ?int $state): void {
                                                         if (! $state) {
@@ -328,6 +367,8 @@ class TukarTambahResource extends BaseResource
                                                         $set('hpp', $batch->hpp);
                                                         $set('kondisi', $batch->kondisi);
                                                     }),
+                                                Hidden::make('id_penjualan_item')
+                                                    ->dehydrated(),
                                                 Hidden::make('_original_qty')
                                                     ->dehydrated(false)
                                                     ->afterStateHydrated(function ($component, $state, Get $get) {
@@ -338,6 +379,10 @@ class TukarTambahResource extends BaseResource
                                                 TextInput::make('qty')
                                                     ->label('Qty')
                                                     ->numeric()
+                                                    ->disabled(function (Get $get): bool {
+                                                        return filled($get('id_penjualan_item'));
+                                                    })
+                                                    ->dehydrated(true)
                                                     ->step(1)
                                                     ->minValue(1)
                                                     ->maxValue(function (Get $get): ?int {
@@ -346,7 +391,8 @@ class TukarTambahResource extends BaseResource
                                                             return null;
                                                         }
                                                         $condition = $get('kondisi');
-                                                        $available = \App\Filament\Resources\PenjualanResource::getAvailableQty($productId, $condition);
+                                                        $batchId = (int) ($get('id_pembelian_item') ?? 0);
+                                                        $available = \App\Filament\Resources\PenjualanResource::getAvailableQty($productId, $condition, $batchId);
 
                                                         // Add back the original qty if editing an existing item
                                                         $originalQty = (int) ($get('_original_qty') ?? 0);
@@ -359,8 +405,9 @@ class TukarTambahResource extends BaseResource
                                                     ->extraInputAttributes(function (Get $get): array {
                                                         $productId = (int) ($get('id_produk') ?? 0);
                                                         $condition = $get('kondisi');
+                                                        $batchId = (int) ($get('id_pembelian_item') ?? 0);
                                                         $max = $productId > 0
-                                                            ? \App\Filament\Resources\PenjualanResource::getAvailableQty($productId, $condition)
+                                                            ? \App\Filament\Resources\PenjualanResource::getAvailableQty($productId, $condition, $batchId)
                                                             : null;
 
                                                         // Add back the original qty if editing an existing item
@@ -381,13 +428,14 @@ class TukarTambahResource extends BaseResource
                                                             return '';
                                                         }
                                                         $condition = $get('kondisi');
-                                                        $available = \App\Filament\Resources\PenjualanResource::getAvailableQty($productId, $condition);
+                                                        $batchId = (int) ($get('id_pembelian_item') ?? 0);
+                                                        $available = \App\Filament\Resources\PenjualanResource::getAvailableQty($productId, $condition, $batchId);
 
                                                         // Add back the original qty if editing an existing item
                                                         $originalQty = (int) ($get('_original_qty') ?? 0);
                                                         $available += $originalQty;
 
-                                                        return 'Stok: '.number_format($available, 0, ',', '.');
+                                                        return 'Stok: ' . number_format($available, 0, ',', '.');
                                                     })
                                                     ->validationMessages([
                                                         'required' => 'Perlu diisi',
@@ -399,9 +447,10 @@ class TukarTambahResource extends BaseResource
                                                         $qty = (int) ($state ?? 0);
                                                         $productId = (int) ($get('id_produk') ?? 0);
                                                         $condition = $get('kondisi');
+                                                        $batchId = (int) ($get('id_pembelian_item') ?? 0);
 
                                                         if ($productId > 0) {
-                                                            $available = \App\Filament\Resources\PenjualanResource::getAvailableQty($productId, $condition);
+                                                            $available = \App\Filament\Resources\PenjualanResource::getAvailableQty($productId, $condition, $batchId);
 
                                                             // Add back the original qty if editing an existing item
                                                             $originalQty = (int) ($get('_original_qty') ?? 0);
@@ -432,7 +481,7 @@ class TukarTambahResource extends BaseResource
                                                     ->numeric()
                                                     ->prefix('Rp')
                                                     ->currencyMask(thousandSeparator: '.', decimalSeparator: ',', precision: 0)
-                                                    ->readOnly()
+                                                    ->disabled()
                                                     ->dehydrated(true)
                                                     ->afterStateHydrated(function (TextInput $component, $state, $record) {
                                                         // If state is already filled, do nothing
@@ -468,23 +517,21 @@ class TukarTambahResource extends BaseResource
                                                         'required' => 'Perlu diisi',
                                                     ])
                                                     ->dehydrateStateUsing(function ($state) {
-                                                        if (is_numeric($state)) {
-                                                            return (int) $state;
-                                                        }
-                                                        $cleaned = preg_replace('/[^0-9]/', '', $state);
+                                                        // Always clean non-digit characters to handle currencyMask formatting
+                                                        $cleaned = preg_replace('/[^0-9]/', '', (string) $state);
 
                                                         return (int) $cleaned;
-                                                    })
-                                                    ->reactive(),
+                                                    }),
 
                                                 Hidden::make('serials')
                                                     ->default([])
-                                                    ->reactive(),
+                                                    ->reactive()
+                                                    ->dehydrated(true),
 
                                                 TextInput::make('serials_count')
                                                     ->label('Serial Number & Garansi')
-                                                    ->formatStateUsing(fn (Get $get): string => count($get('serials') ?? []).' serials')
-                                                    ->live()
+                                                    ->formatStateUsing(fn(Get $get): string => count(array_filter($get('serials') ?? [], fn($s) => ! empty($s['sn']))) . ' serials')
+                                                    // ->live()
                                                     ->disabled()
                                                     ->dehydrated(true)
                                                     ->suffixAction(
@@ -562,6 +609,8 @@ class TukarTambahResource extends BaseResource
                                         TableRepeater::make('jasa_items')
                                             ->label('Layanan Jasa (Opsional)')
                                             ->addActionLabel('+ Tambah Jasa')
+                                            ->disabled(fn($livewire) => $livewire->record instanceof \App\Models\TukarTambah && ! $livewire->record->canEditJasa())
+                                            ->deletable(fn($livewire) => ! ($livewire->record instanceof \App\Models\TukarTambah) || $livewire->record->canEditJasa())
                                             ->reactive()
                                             ->afterStateUpdated(function (Set $set, Get $get): void {
                                                 // Update total items count
@@ -604,7 +653,7 @@ class TukarTambahResource extends BaseResource
                                                 Select::make('jasa_id')
                                                     ->label('Jasa')
                                                     ->prefixIcon('hugeicons-tools')
-                                                    ->options(fn () => Jasa::query()->orderBy('nama_jasa')->pluck('nama_jasa', 'id')->all())
+                                                    ->options(fn() => Jasa::query()->orderBy('nama_jasa')->pluck('nama_jasa', 'id')->all())
                                                     ->searchable()
                                                     ->required()
                                                     ->validationMessages([
@@ -634,11 +683,7 @@ class TukarTambahResource extends BaseResource
                                                         'required' => 'Perlu diisi',
                                                     ])
                                                     ->dehydrateStateUsing(function ($state) {
-                                                        if (is_numeric($state)) {
-                                                            return (int) $state;
-                                                        }
-                                                        $cleaned = preg_replace('/[^0-9]/', '', $state);
-
+                                                        $cleaned = preg_replace('/[^0-9]/', '', (string) $state);
                                                         return (int) $cleaned;
                                                     })
                                                     ->reactive(),
@@ -690,6 +735,8 @@ class TukarTambahResource extends BaseResource
                                                     ->suffixIcon('heroicon-m-banknotes'),
                                             ])
                                             ->columnSpanFull(),
+
+
                                     ]),
                             ]),
 
@@ -718,10 +765,22 @@ class TukarTambahResource extends BaseResource
                                             })
                                             ->dehydrated(),
 
+                                        Select::make('tipe_pembelian')
+                                            ->label('Pajak Pembelian')
+                                            ->options(['non_ppn' => 'Non PPN', 'ppn' => 'PPN (11%)'])
+                                            ->default('non_ppn')
+                                            ->helperText('Pajak untuk barang masuk'),
+
                                         TableRepeater::make('items')
                                             ->label('Barang')
                                             ->addActionLabel('+ Tambah Barang')
                                             ->minItems(1)
+                                            // R09: LOCKED saat edit - mengikuti kebijakan Pembelian standar
+                                            ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\TukarTambahResource\Pages\EditTukarTambah)
+                                            ->deletable(fn($livewire) => ! ($livewire instanceof \App\Filament\Resources\TukarTambahResource\Pages\EditTukarTambah))
+                                            ->reorderable(fn($livewire) => ! ($livewire instanceof \App\Filament\Resources\TukarTambahResource\Pages\EditTukarTambah))
+                                            ->addable(fn($livewire) => ! ($livewire instanceof \App\Filament\Resources\TukarTambahResource\Pages\EditTukarTambah))
+                                            ->cloneable(false)
                                             ->reactive()
                                             ->afterStateUpdated(function (Set $set, Get $get): void {
                                                 // Recalculate total pembelian
@@ -763,12 +822,13 @@ class TukarTambahResource extends BaseResource
                                                 \Filament\Forms\Components\Hidden::make('id_pembelian_item'),
                                                 Select::make('id_produk')
                                                     ->label('Produk')
-                                                    ->options(fn () => \App\Models\Produk::query()->orderBy('nama_produk')->pluck('nama_produk', 'id')->all())
+                                                    ->options(fn() => \App\Models\Produk::query()->whereNull('deleted_at')->orderBy('nama_produk')->pluck('nama_produk', 'id')->all())
                                                     ->searchable()
                                                     ->required()
                                                     ->validationMessages([
                                                         'required' => 'Perlu diisi',
                                                     ])
+                                                    ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\TukarTambahResource\Pages\EditTukarTambah)
                                                     ->columnSpan(2),
                                                 Select::make('kondisi')
                                                     ->label('Kondisi')
@@ -777,7 +837,8 @@ class TukarTambahResource extends BaseResource
                                                     ->required()
                                                     ->validationMessages([
                                                         'required' => 'Perlu diisi',
-                                                    ]),
+                                                    ])
+                                                    ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\TukarTambahResource\Pages\EditTukarTambah),
                                                 TextInput::make('qty')
                                                     ->label('Jml')
                                                     ->numeric()
@@ -786,6 +847,7 @@ class TukarTambahResource extends BaseResource
                                                     ->validationMessages([
                                                         'required' => 'Perlu diisi',
                                                     ])
+                                                    ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\TukarTambahResource\Pages\EditTukarTambah)
                                                     ->lazy()
                                                     ->afterStateUpdated(function (Set $set, Get $get): void {
                                                         // Trigger parent repeater update
@@ -830,16 +892,14 @@ class TukarTambahResource extends BaseResource
                                                     ->validationMessages([
                                                         'required' => 'Perlu diisi',
                                                     ])
+                                                    ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\TukarTambahResource\Pages\EditTukarTambah)
                                                     ->dehydrateStateUsing(function ($state) {
-                                                        if (is_numeric($state)) {
-                                                            return (int) $state;
-                                                        }
-                                                        // Remove formatting and convert to int
-                                                        $cleaned = preg_replace('/[^0-9]/', '', $state);
+                                                        // Always clean non-digit characters to handle currencyMask formatting
+                                                        $cleaned = preg_replace('/[^0-9]/', '', (string) $state);
 
                                                         return (int) $cleaned;
                                                     })
-                                                    ->lazy()
+                                                    ->live(debounce: '300ms')
                                                     ->afterStateUpdated(function (Set $set, Get $get): void {
                                                         // Trigger parent repeater update
                                                         $items = $get('../../items') ?? [];
@@ -883,16 +943,14 @@ class TukarTambahResource extends BaseResource
                                                     ->validationMessages([
                                                         'required' => 'Perlu diisi',
                                                     ])
+                                                    ->disabled(fn($livewire) => $livewire instanceof \App\Filament\Resources\TukarTambahResource\Pages\EditTukarTambah)
                                                     ->dehydrateStateUsing(function ($state) {
-                                                        if (is_numeric($state)) {
-                                                            return (int) $state;
-                                                        }
-                                                        // Remove formatting and convert to int
-                                                        $cleaned = preg_replace('/[^0-9]/', '', $state);
+                                                        // Always clean non-digit characters to handle currencyMask formatting
+                                                        $cleaned = preg_replace('/[^0-9]/', '', (string) $state);
 
                                                         return (int) $cleaned;
                                                     })
-                                                    ->lazy(),
+                                                    ->live(debounce: '300ms'),
                                             ])
                                             ->columns(6)
                                             ->colStyles([
@@ -925,6 +983,8 @@ class TukarTambahResource extends BaseResource
                                                 $set('total_pembelian_summary', number_format($total, 0, ',', '.'));
                                             })
                                             ->suffixIcon('heroicon-m-calculator'),
+
+
                                     ]),
                             ]),
                     ])
@@ -970,135 +1030,79 @@ class TukarTambahResource extends BaseResource
                                 // Calculate grand total
                                 $grandTotal = $penjualanTotal - $pembelianTotal;
 
-                                return 'Rp '.number_format($grandTotal, 0, ',', '.');
+                                return 'Rp ' . number_format($grandTotal, 0, ',', '.');
                             })
                             ->extraAttributes(['class' => 'text-xl font-bold text-primary-600'])
                             ->helperText('Total yang dibayar pelanggan setelah dikurangi nilai barang masuk'),
                     ])
                     ->collapsed(false),
 
-                // Unified Pembayaran Section
+                // Pembayaran Section
                 Section::make('Pembayaran')
                     ->description('Pembayaran untuk penjualan dan pembelian')
                     ->icon('heroicon-m-banknotes')
                     ->schema([
-                        Grid::make(2)
-                            ->schema([
-                                TextInput::make('penjualan.diskon_total')
-                                    ->label('Diskon Penjualan')
-                                    ->prefix('Rp')
-                                    ->currencyMask(thousandSeparator: '.', decimalSeparator: ',', precision: 0)
-                                    ->default(0)
-                                    ->helperText('Diskon untuk barang keluar'),
-                                Select::make('pembelian.tipe_pembelian')
-                                    ->label('Pajak Pembelian')
-                                    ->options(['non_ppn' => 'Non PPN', 'ppn' => 'PPN (11%)'])
-                                    ->default('non_ppn')
-                                    ->helperText('Pajak untuk barang masuk'),
-                            ]),
-
-                        TableRepeater::make('unified_pembayaran')
-                            ->label('Metode Pembayaran')
+                        TableRepeater::make('pembayaran')
+                            ->label('Riwayat Pembayaran')
                             ->addActionLabel('+ Tambah Pembayaran')
+                            ->dehydrated(true)
+                            ->live(debounce: '200ms')
                             ->schema([
+                                Select::make('tipe')
+                                    ->label('Tipe')
+                                    ->options(['penjualan' => 'Penjualan', 'pembelian' => 'Pembelian'])
+                                    ->default('penjualan')
+                                    ->native(false)
+                                    ->dehydrated(true)
+                                    ->live(debounce: '200ms'),
                                 DatePicker::make('tanggal')
                                     ->label('Tanggal')
                                     ->default(now())
                                     ->native(false)
-                                    ->required()
-                                    ->validationMessages([
-                                        'required' => 'Perlu diisi',
-                                    ]),
-                                Select::make('tipe_transaksi')
-                                    ->label('Untuk')
-                                    ->options([
-                                        'penjualan' => 'Penjualan',
-                                        'pembelian' => 'Pembelian',
-                                    ])
-                                    ->required()
-                                    ->validationMessages([
-                                        'required' => 'Perlu diisi',
-                                    ])
-                                    ->reactive(),
-
+                                    ->dehydrated(true),
                                 Select::make('metode_bayar')
                                     ->label('Metode')
                                     ->options(['cash' => 'Tunai', 'transfer' => 'Transfer'])
-                                    ->required()
-                                    ->validationMessages([
-                                        'required' => 'Perlu diisi',
-                                    ])
-                                    ->reactive(),
+                                    ->dehydrated(true),
                                 Select::make('akun_transaksi_id')
                                     ->label('Akun Transaksi')
-                                    ->options(fn () => AkunTransaksi::query()->where('is_active', true)->pluck('nama_akun', 'id'))
+                                    ->options(fn() => AkunTransaksi::query()->where('is_active', true)->pluck('nama_akun', 'id'))
                                     ->searchable()
-                                    ->required(fn (Get $get) => $get('metode_bayar') === 'transfer')
-                                    ->validationMessages([
-                                        'required' => 'Perlu diisi',
-                                    ]),
+                                    ->dehydrated(true),
                                 TextInput::make('jumlah')
                                     ->label('Nominal')
                                     ->prefix('Rp')
                                     ->currencyMask(thousandSeparator: '.', decimalSeparator: ',', precision: 0)
-                                    ->required()
-                                    ->validationMessages([
-                                        'required' => 'Perlu diisi',
-                                    ])
-                                    ->placeholder(function (Get $get, $livewire): string {
-                                        $tipeTransaksi = $get('tipe_transaksi');
-
-                                        if (! $tipeTransaksi) {
-                                            return 'Pilih tipe transaksi dulu';
-                                        }
-
-                                        try {
-                                            $formData = $livewire->data ?? [];
-
-                                            if ($tipeTransaksi === 'penjualan') {
-                                                // Calculate penjualan total from form data
-                                                $items = $formData['penjualan']['items'] ?? [];
-                                                $jasaItems = $formData['penjualan']['jasa_items'] ?? [];
-
-                                                $productTotal = collect($items)->sum(function ($item) {
-                                                    $qty = (int) ($item['qty'] ?? 0);
-                                                    $price = (int) ($item['harga_jual'] ?? 0);
-
-                                                    return $qty * $price;
-                                                });
-
-                                                $serviceTotal = collect($jasaItems)->sum(function ($item) {
-                                                    $qty = (int) ($item['qty'] ?? 0);
-                                                    $price = (int) ($item['harga'] ?? 0);
-
-                                                    return $qty * $price;
-                                                });
-
-                                                $diskon = (int) ($formData['penjualan']['diskon_total'] ?? 0);
-                                                $total = max(0, ($productTotal + $serviceTotal) - $diskon);
-
-                                                return $total > 0 ? 'Saran: Rp '.number_format($total, 0, ',', '.') : 'Total Penjualan';
-                                            } elseif ($tipeTransaksi === 'pembelian') {
-                                                // Calculate pembelian total from form data
-                                                $items = $formData['pembelian']['items'] ?? [];
-
-                                                $total = collect($items)->sum(function ($item) {
-                                                    $qty = (int) ($item['qty'] ?? 0);
-                                                    $hpp = (int) ($item['hpp'] ?? 0);
-
-                                                    return $qty * $hpp;
-                                                });
-
-                                                return $total > 0 ? 'Saran: Rp '.number_format($total, 0, ',', '.') : 'Total Pembelian';
-                                            }
-                                        } catch (\Exception $e) {
-                                            // Fallback if form data is not available
-                                            return $tipeTransaksi === 'penjualan' ? 'Total Penjualan' : 'Total Pembelian';
-                                        }
-
-                                        return 'Masukkan nominal';
+                                    ->dehydrated(true)
+                                    ->dehydrateStateUsing(function ($state) {
+                                        $cleaned = preg_replace('/[^0-9]/', '', (string) $state);
+                                        return (int) $cleaned;
                                     })
-                                    ->live(onBlur: true),
+                                    ->live(debounce: '200ms')
+                                    ->helperText(function (Get $get): ?string {
+                                        $tipe = $get('tipe');
+                                        if ($tipe === 'penjualan') {
+                                            $items = $get('penjualan.items') ?? [];
+                                            $jasaItems = $get('penjualan.jasa_items') ?? [];
+                                            $diskon = (int) ($get('penjualan.diskon_total') ?? 0);
+                                            $productTotal = collect($items)->sum(fn ($i) => (int) ($i['qty'] ?? 0) * (int) ($i['harga_jual'] ?? 0));
+                                            $serviceTotal = collect($jasaItems)->sum(fn ($i) => (int) ($i['qty'] ?? 0) * (int) ($i['harga'] ?? 0));
+                                            $total = $productTotal + $serviceTotal - $diskon;
+                                            $payments = $get('pembayaran') ?? [];
+                                            $paid = collect($payments)->where('tipe', 'penjualan')->sum(fn ($p) => (int) ($p['jumlah'] ?? 0));
+                                            $sisa = max(0, $total - $paid);
+                                            return 'Sisa Penjualan: Rp ' . number_format($sisa, 0, ',', '.');
+                                        }
+                                        if ($tipe === 'pembelian') {
+                                            $items = $get('pembelian.items') ?? [];
+                                            $total = collect($items)->sum(fn ($i) => (int) ($i['qty'] ?? 0) * (int) ($i['hpp'] ?? 0));
+                                            $payments = $get('pembayaran') ?? [];
+                                            $paid = collect($payments)->where('tipe', 'pembelian')->sum(fn ($p) => (int) ($p['jumlah'] ?? 0));
+                                            $sisa = max(0, $total - $paid);
+                                            return 'Sisa Pembelian: Rp ' . number_format($sisa, 0, ',', '.');
+                                        }
+                                        return null;
+                                    }),
                                 FileUpload::make('bukti_transfer')
                                     ->label('Bukti')
                                     ->image()
@@ -1109,126 +1113,48 @@ class TukarTambahResource extends BaseResource
                                     ->saveUploadedFileUsing(function ($file, $get) {
                                         $directory = 'tukar-tambah/bukti-transfer';
                                         $filename = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME);
-                                        $filename = \Illuminate\Support\Str::slug($filename).'-'.uniqid().'.webp';
-
-                                        // Create temp path for processed image
-                                        $tempPath = sys_get_temp_dir().'/'.$filename;
-
-                                        // Get image dimensions
+                                        $filename = \Illuminate\Support\Str::slug($filename) . '-' . uniqid() . '.webp';
+                                        $tempPath = sys_get_temp_dir() . '/' . $filename;
                                         $imageInfo = getimagesize($file->getRealPath());
                                         $width = $imageInfo[0] ?? 0;
                                         $height = $imageInfo[1] ?? 0;
-
-                                        // FHD limits
                                         $maxWidth = 1920;
                                         $maxHeight = 1080;
-
-                                        // Use Spatie Image
                                         $image = \Spatie\Image\Image::load($file->getRealPath());
-
-                                        // Only resize if image is larger than FHD
                                         if ($width > $maxWidth || $height > $maxHeight) {
                                             $image->width($maxWidth)
                                                 ->height($maxHeight)
                                                 ->fit(\Spatie\Image\Enums\Fit::Contain);
                                         }
-
-                                        // Convert to webp with 80% quality and save
                                         $image->format('webp')
                                             ->quality(80)
                                             ->save($tempPath);
-
-                                        // Store to disk
-                                        $path = $directory.'/'.$filename;
+                                        $path = $directory . '/' . $filename;
                                         \Illuminate\Support\Facades\Storage::disk('public')->put($path, file_get_contents($tempPath));
-
-                                        // Cleanup temp file
                                         @unlink($tempPath);
-
                                         return $path;
                                     })
                                     ->openable()
                                     ->downloadable()
                                     ->previewable(false)
                                     ->extraAttributes(['class' => 'compact-file-upload'])
-                                    ->helperText(new \Illuminate\Support\HtmlString('
-                                        <style>
-                                            .compact-file-upload .filepond--root,
-                                            .compact-file-upload .filepond--panel-root {
-                                                min-height: 38px !important;
-                                                height: 38px !important;
-                                                border-radius: 0.5rem;
-                                            }
-                                            .compact-file-upload .filepond--drop-label {
-                                                min-height: 38px !important;
-                                                display: flex;
-                                                align-items: center;
-                                                justify-content: center;
-                                                transform: none !important;
-                                                padding: 0 !important;
-                                                color: rgb(var(--primary-600)) !important;
-                                                cursor: pointer;
-                                            }
-                                        </style>
-                                    ')),
+                                    ->dehydrated(true),
                             ])
                             ->colStyles([
+                                'tipe' => 'width: 12%;',
                                 'tanggal' => 'width: 13%;',
-                                'tipe_transaksi' => 'width: 12%;',
-                                'metode_bayar' => 'width: 18%;',
-                                'akun_transaksi_id' => 'width: 18%;',
-                                'jumlah' => 'width: 19%;',
-                                'bukti_transfer' => 'width: 29%;',
+                                'metode_bayar' => 'width: 13%;',
+                                'akun_transaksi_id' => 'width: 20%;',
+                                'jumlah' => 'width: 22%;',
+                                'bukti_transfer' => 'width: 20%;',
                             ])
                             ->columns(6)
                             ->minItems(0)
-                            ->defaultItems(2)
-                            ->default([
-                                [
-                                    'tipe_transaksi' => 'penjualan',
-                                    'tanggal' => now()->format('Y-m-d'),
-                                    'metode_bayar' => null,
-                                    'akun_transaksi_id' => null,
-                                    'jumlah' => null,
-                                    'bukti_transfer' => null,
-                                ],
-                                [
-                                    'tipe_transaksi' => 'pembelian',
-                                    'tanggal' => now()->format('Y-m-d'),
-                                    'metode_bayar' => null,
-                                    'akun_transaksi_id' => null,
-                                    'jumlah' => null,
-                                    'bukti_transfer' => null,
-                                ],
-                            ])
-                            ->reorderable(false)
-                            ->afterStateHydrated(function (Set $set, Get $get, $state) {
-                                // On edit, load existing payments from both penjualan and pembelian
-                                if (filled($state)) {
-                                    return;
-                                }
-
-                                $unifiedPayments = [];
-
-                                // Load penjualan payments
-                                $penjualanPayments = $get('penjualan.pembayaran') ?? [];
-                                foreach ($penjualanPayments as $payment) {
-                                    $unifiedPayments[] = array_merge($payment, ['tipe_transaksi' => 'penjualan']);
-                                }
-
-                                // Load pembelian payments
-                                $pembelianPayments = $get('pembelian.pembayaran') ?? [];
-                                foreach ($pembelianPayments as $payment) {
-                                    $unifiedPayments[] = array_merge($payment, ['tipe_transaksi' => 'pembelian']);
-                                }
-
-                                if (! empty($unifiedPayments)) {
-                                    $set('unified_pembayaran', $unifiedPayments);
-                                }
-                            }),
+                            ->defaultItems(0)
+                            ->reorderable(false),
                     ])
-                    ->collapsible()
-                    ->collapsed(false),
+                    ->columnSpanFull(),
+
 
             ]);
     }
@@ -1239,7 +1165,7 @@ class TukarTambahResource extends BaseResource
             ->columns([
                 TextColumn::make('id_tukar_tambah')
                     ->label('Kode')
-                    ->state(fn (TukarTambah $record): string => $record->kode)
+                    ->state(fn(TukarTambah $record): string => $record->kode)
                     ->weight('bold')
                     ->copyable()
                     ->hidden(true)
@@ -1264,12 +1190,12 @@ class TukarTambahResource extends BaseResource
                 TextColumn::make('penjualan.member.nama_member')
                     ->label('Pelanggan')
                     ->icon('heroicon-m-user-circle')
-                    ->formatStateUsing(fn ($state) => Str::title($state))
+                    ->formatStateUsing(fn($state) => Str::title($state))
                     ->searchable(['nama_member', 'no_hp'])
                     ->toggleable()
                     ->limit(20)
-                    ->tooltip(fn (TukarTambah $record): ?string => $record->penjualan?->member?->nama_member)
-                    ->description(fn (TukarTambah $record): ?string => $record->penjualan?->member?->no_hp)
+                    ->tooltip(fn(TukarTambah $record): ?string => $record->penjualan?->member?->nama_member)
+                    ->description(fn(TukarTambah $record): ?string => $record->penjualan?->member?->no_hp)
                     ->sortable(),
                 TextColumn::make('karyawan.nama_karyawan')
                     ->label('Karyawan')
@@ -1283,7 +1209,7 @@ class TukarTambahResource extends BaseResource
                     ->disk('public')
                     ->circular()
                     ->defaultImageUrl(url('/images/icons/icon-512x512.png'))
-                    ->tooltip(fn (TukarTambah $record): ?string => $record->karyawan?->nama_karyawan)
+                    ->tooltip(fn(TukarTambah $record): ?string => $record->karyawan?->nama_karyawan)
                     ->toggleable()
                     ->sortable(),
                 TextColumn::make('penjualan.no_nota')
@@ -1298,13 +1224,35 @@ class TukarTambahResource extends BaseResource
                     ->toggleable()
                     ->visible(false)
                     ->copyable(),
-                TextColumn::make('status')
-                    ->label('Status')
+                TextColumn::make('status_dokumen')
+                    ->label('Status Dok.')
                     ->badge()
-                    ->state(fn (TukarTambah $record): string => self::calculatePaymentStatus($record))
-                    ->color(fn (string $state): string => match ($state) {
+                    ->state(function (TukarTambah $record): string {
+                        if ($record->isFinal() && $record->is_locked) {
+                            return 'LOCKED';
+                        }
+                        if ($record->isFinal()) {
+                            return 'FINAL';
+                        }
+                        if ($record->void_used) {
+                            return 'VOIDED';
+                        }
+                        return 'DRAFT';
+                    })
+                    ->color(fn(string $state): string => match ($state) {
+                        'DRAFT' => 'gray',
+                        'FINAL' => 'success',
+                        'LOCKED' => 'danger',
+                        'VOIDED' => 'warning',
+                        default => 'gray',
+                    })
+                    ->toggleable(),
+                TextColumn::make('status')
+                    ->label('Status Bayar')
+                    ->badge()
+                    ->state(fn(TukarTambah $record): string => self::calculatePaymentStatus($record))
+                    ->color(fn(string $state): string => match ($state) {
                         'LUNAS' => 'success',
-                        'DP' => 'warning',
                         'TEMPO' => 'danger',
                         default => 'gray',
                     })
@@ -1315,145 +1263,342 @@ class TukarTambahResource extends BaseResource
                     ->color('success')
                     ->toggleable()
                     ->sortable()
-                    ->state(fn (TukarTambah $record): string => 'Rp '.number_format(self::calculateGrandTotal($record), 0, ',', '.')),
+                    ->state(fn(TukarTambah $record): string => 'Rp ' . number_format(self::calculateGrandTotal($record), 0, ',', '.')),
                 TextColumn::make('sisa_bayar')
                     ->label('Sisa Bayar')
                     ->weight('bold')
                     ->color('danger')
                     ->toggleable()
                     ->sortable()
-                    ->state(fn (TukarTambah $record): string => 'Rp '.number_format(self::calculateGrandTotal($record) - self::calculatePaidAmount($record), 0, ',', '.')),
+                    ->state(fn(TukarTambah $record): string => 'Rp ' . number_format(self::calculateGrandTotal($record) - self::calculatePaidAmount($record), 0, ',', '.')),
             ])
             ->defaultSort('tanggal', 'desc')
             ->actions([
+                // POST: Draft -> Final
+                Action::make('post')
+                    ->label('')
+                    ->icon('heroicon-m-check-circle')
+                    ->tooltip('Post ke Final')
+                    ->color('success')
+                    ->visible(fn(TukarTambah $record) => $record->canPost())
+                    ->requiresConfirmation()
+                    ->modalHeading('Post Tukar Tambah')
+                    ->modalDescription('Tukar tambah akan di-post ke Final. Item pembelian akan terkunci. Lanjutkan?')
+                    ->action(function (TukarTambah $record): void {
+                        try {
+                            $record->post();
+                            \Filament\Notifications\Notification::make()
+                                ->title('Tukar tambah di-post')
+                                ->success()
+                                ->send();
+                        } catch (\Exception $e) {
+                            \Filament\Notifications\Notification::make()
+                                ->title('Gagal post')
+                                ->body($e->getMessage())
+                                ->danger()
+                                ->send();
+                        }
+                    }),
+
+                // VOID: Final -> Voided (1x)
+                Action::make('void')
+                    ->label('')
+                    ->icon('heroicon-m-arrow-uturn-left')
+                    ->tooltip('Void ke Draft')
+                    ->color('warning')
+                    ->visible(fn(TukarTambah $record) => $record->canVoid())
+                    ->requiresConfirmation()
+                    ->modalHeading('Void Tukar Tambah')
+                    ->modalDescription('Tukar tambah akan di-void. Item & jasa tetap terkunci, hanya pembayaran yang bisa diubah. Lanjutkan?')
+                    ->action(function (TukarTambah $record): void {
+                        try {
+                            $record->voidToDraft();
+                            \Filament\Notifications\Notification::make()
+                                ->title('Tukar tambah di-void')
+                                ->success()
+                                ->send();
+                        } catch (\Exception $e) {
+                            \Filament\Notifications\Notification::make()
+                                ->title('Gagal void')
+                                ->body($e->getMessage())
+                                ->danger()
+                                ->send();
+                        }
+                    }),
+
+                // LOCK: Final -> Locked
+                Action::make('lock')
+                    ->label('')
+                    ->icon('heroicon-m-lock-closed')
+                    ->tooltip('Lock Final')
+                    ->color('danger')
+                    ->visible(fn(TukarTambah $record) => $record->canLock())
+                    ->requiresConfirmation()
+                    ->modalHeading('Lock Tukar Tambah')
+                    ->modalDescription('Tukar tambah akan terkunci permanen. Tidak ada yang bisa diubah lagi. Lanjutkan?')
+                    ->action(function (TukarTambah $record): void {
+                        try {
+                            $record->lockFinal();
+                            \Filament\Notifications\Notification::make()
+                                ->title('Tukar tambah terkunci')
+                                ->success()
+                                ->send();
+                        } catch (\Exception $e) {
+                            \Filament\Notifications\Notification::make()
+                                ->title('Gagal lock')
+                                ->body($e->getMessage())
+                                ->danger()
+                                ->send();
+                        }
+                    }),
+
                 \Filament\Tables\Actions\ActionGroup::make([
                     Action::make('invoice')
                         ->label('Invoice')
                         ->icon('heroicon-m-printer')
                         ->color('primary')
-                        ->url(fn (TukarTambah $record) => route('tukar-tambah.invoice', $record))
+                        ->url(fn(TukarTambah $record) => route('tukar-tambah.invoice', $record))
                         ->openUrlInNewTab(),
                     Action::make('invoice_simple')
                         ->label('Invoice Simple')
                         ->icon('heroicon-m-document-text')
                         ->color('gray')
-                        ->url(fn (TukarTambah $record) => route('tukar-tambah.invoice.simple', $record))
+                        ->url(fn(TukarTambah $record) => route('tukar-tambah.invoice.simple', $record))
                         ->openUrlInNewTab(),
                 ])->label('Print')
                     ->icon('heroicon-m-printer')
                     ->color('primary'),
-                \Filament\Tables\Actions\ActionGroup::make([
 
+                \Filament\Tables\Actions\ActionGroup::make([
                     Action::make('view')
                         ->label('Lihat')
                         ->icon('heroicon-m-eye')
                         ->color('primary')
-                        ->url(fn (TukarTambah $record) => TukarTambahResource::getUrl('view', ['record' => $record])),
+                        ->url(fn(TukarTambah $record) => TukarTambahResource::getUrl('view', ['record' => $record])),
                     Action::make('edit')
                         ->label('Edit')
                         ->icon('heroicon-m-pencil-square')
                         ->color('warning')
+                        ->visible(fn(TukarTambah $record) => $record->canEditItems() || $record->canEditPayment())
                         ->action(function (TukarTambah $record, \Filament\Tables\Actions\Action $action): void {
                             $livewire = $action->getLivewire();
-                            // if ($record->isEditLocked()) {
-                            //     $livewire->editBlockedMessage = $record->getEditBlockedMessage();
-                            //     $livewire->editBlockedPenjualanReferences = $record->getExternalPenjualanReferences()->all();
-                            //     $livewire->replaceMountedAction('editBlocked');
-                            //
-                            //     return;
-                            // }
                             $livewire->redirect(TukarTambahResource::getUrl('edit', ['record' => $record]));
                         }),
                     Tables\Actions\DeleteAction::make()
-                        ->action(function ($record, $livewire) {
-                            try {
-                                $record->delete();
+                        ->visible(fn() => auth()->user()?->hasRole('godmode'))
+                        ->requiresConfirmation()
+                        ->modalHeading(
+                            fn(TukarTambah $record): string => $record->canDelete() && $record->getExternalPenjualanReferences()->isEmpty()
+                                ? 'Hapus Tukar Tambah'
+                                : 'Tidak Bisa Dihapus'
+                        )
+                        ->modalIcon(
+                            fn(TukarTambah $record): string => $record->canDelete() && $record->getExternalPenjualanReferences()->isEmpty()
+                                ? 'heroicon-o-trash'
+                                : 'heroicon-o-exclamation-triangle'
+                        )
+                        ->modalIconColor(
+                            fn(TukarTambah $record): string => $record->canDelete() && $record->getExternalPenjualanReferences()->isEmpty()
+                                ? 'danger'
+                                : 'warning'
+                        )
+                        ->modalDescription(function (TukarTambah $record): string {
+                            $canDelete = $record->canDelete() && $record->getExternalPenjualanReferences()->isEmpty();
 
-                                // Tutup modal
-                                $livewire->dispatch('close-modal', id: 'delete');
+                            if (! $canDelete) {
+                                $reasons = [];
 
-                                \Filament\Notifications\Notification::make()
-                                    ->title('Tukar tambah berhasil dihapus')
-                                    ->success()
-                                    ->send();
-                            } catch (\Illuminate\Validation\ValidationException $e) {
-                                $messages = collect($e->errors())
-                                    ->flatten()
-                                    ->implode(' ');
+                                if ($record->isFinal()) {
+                                    $reasons[] = '• Status sudah final, tidak bisa dihapus';
+                                }
+                                if ($record->is_locked) {
+                                    $reasons[] = '• Transaksi sudah terkunci';
+                                }
 
-                                // Tutup modal terlebih dahulu
-                                $livewire->dispatch('close-modal', id: 'delete');
+                                $notas = $record->getExternalPenjualanReferences()->pluck('nota')->filter()->values();
+                                if ($notas->isNotEmpty()) {
+                                    $reasons[] = '• Item pembelian dipakai di penjualan: ' . $notas->implode(', ');
+                                }
 
-                                // Notifikasi toast
-                                \Filament\Notifications\Notification::make()
-                                    ->title('Tidak Bisa Dihapus')
-                                    ->body($messages)
-                                    ->icon('heroicon-o-exclamation-triangle')
-                                    ->danger()
-                                    ->persistent()
-                                    ->send();
-
-                                $livewire->deleteBlockedMessage = $messages;
-                                $livewire->deleteBlockedPenjualanReferences = $record->getExternalPenjualanReferences()->all();
-                                $livewire->replaceMountedAction('deleteBlocked');
+                                return implode("\n", $reasons) ?: 'Tukar tambah ini tidak dapat dihapus.';
                             }
-                        }),
 
+                            return 'Apakah Anda yakin ingin menghapus tukar tambah ' . $record->kode . '? Tindakan ini tidak dapat dibatalkan.';
+                        })
+                        ->modalSubmitAction(function (TukarTambah $record) {
+                            $canDelete = $record->canDelete() && $record->getExternalPenjualanReferences()->isEmpty();
+
+                            return $canDelete ? null : false;
+                        })
+                        ->modalCancelActionLabel('Tutup')
+                        ->extraModalFooterActions(function (TukarTambah $record): array {
+                            $canDelete = $record->canDelete() && $record->getExternalPenjualanReferences()->isEmpty();
+
+                            if ($canDelete) {
+                                return [];
+                            }
+
+                            return $record->getExternalPenjualanReferences()
+                                ->filter(fn(array $ref) => ! empty($ref['id']))
+                                ->map(function (array $ref, int $index) {
+                                    $nota = $ref['nota'] ?? null;
+                                    $label = $nota ? 'Lihat ' . $nota : 'Lihat Penjualan';
+
+                                    return Tables\Actions\StaticAction::make('viewPenjualan' . $index)
+                                        ->button()
+                                        ->label($label)
+                                        ->icon('heroicon-m-arrow-top-right-on-square')
+                                        ->url(PenjualanResource::getUrl('view', ['record' => $ref['id']]))
+                                        ->openUrlInNewTab()
+                                        ->color('warning');
+                                })
+                                ->values()
+                                ->all();
+                        })
+                        ->action(function (TukarTambah $record, $livewire): void {
+                            $canDelete = $record->canDelete() && $record->getExternalPenjualanReferences()->isEmpty();
+
+                            if (! $canDelete) {
+                                return;
+                            }
+
+                            $livewire->deleteRecordId = $record->id_tukar_tambah;
+                            $livewire->mountAction('deleteStep2');
+                        }),
                 ])->label('Aksi')
                     ->icon('heroicon-m-ellipsis-horizontal')
                     ->color('gray'),
             ])
             ->bulkActions([
-                \Filament\Tables\Actions\BulkActionGroup::make([
-                    \Filament\Tables\Actions\DeleteBulkAction::make()
-                        ->action(function ($records, $livewire) {
-                            $deletedCount = 0;
-                            $failedCount = 0;
-                            $failedMessages = [];
-                            $failedReferences = [];
+                Tables\Actions\BulkActionGroup::make([
+                    Tables\Actions\BulkAction::make('delete')
+                        ->label('Hapus')
+                        ->icon('heroicon-m-trash')
+                        ->color('danger')
+                        ->visible(fn() => auth()->user()?->hasRole('godmode'))
+                        ->requiresConfirmation()
+                        ->modalCancelAction(false)
+                        ->modalHeading('⚠️ Hapus Tukar Tambah')
+                        ->modalIcon('heroicon-o-trash')
+                        ->modalIconColor('danger')
+                        ->modalContent(function (\Illuminate\Database\Eloquent\Collection $records): \Illuminate\Support\HtmlString {
+                            $canDelete = $records->filter(fn(TukarTambah $r) => $r->canDelete() && $r->getExternalPenjualanReferences()->isEmpty());
+                            $blocked   = $records->filter(fn(TukarTambah $r) => ! ($r->canDelete() && $r->getExternalPenjualanReferences()->isEmpty()));
+
+                            $html = '<div class="space-y-4 text-sm">';
+
+                            if ($canDelete->isNotEmpty()) {
+                                $html .= '<div>';
+                                $html .= '<p class="font-semibold text-success-600 dark:text-success-400 mb-1">✅ Akan dihapus (' . $canDelete->count() . ')</p>';
+                                $html .= '<ul class="space-y-1 pl-3">';
+                                foreach ($canDelete as $r) {
+                                    $html .= '<li class="flex items-center gap-2">'
+                                        . '<span class="font-mono text-xs bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded">' . e($r->kode) . '</span>'
+                                        . '</li>';
+                                }
+                                $html .= '</ul>';
+                                $html .= '</div>';
+                            }
+
+                            if ($blocked->isNotEmpty()) {
+                                $html .= '<div>';
+                                $html .= '<p class="font-semibold text-danger-600 dark:text-danger-400 mb-1">⛔ Tidak bisa dihapus (' . $blocked->count() . ')</p>';
+                                $html .= '<ul class="space-y-2 pl-3">';
+                                foreach ($blocked as $r) {
+                                    $reasons = [];
+                                    if ($r->isFinal()) {
+                                        $reasons[] = '<span class="text-warning-600 dark:text-warning-400">Status final</span>';
+                                    }
+                                    if ($r->is_locked) {
+                                        $reasons[] = '<span class="text-warning-600 dark:text-warning-400">Terkunci</span>';
+                                    }
+                                    $notas = $r->getExternalPenjualanReferences()->pluck('nota')->filter()->implode(', ');
+                                    if ($notas) {
+                                        $reasons[] = '<span class="text-danger-600 dark:text-danger-400">Penjualan: ' . e($notas) . '</span>';
+                                    }
+                                    $html .= '<li>'
+                                        . '<span class="font-mono text-xs bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded">' . e($r->kode) . '</span>';
+                                    if ($reasons) {
+                                        $html .= '<ul class="mt-1 pl-4 space-y-0.5">';
+                                        foreach ($reasons as $reason) {
+                                            $html .= '<li class="text-xs">— ' . $reason . '</li>';
+                                        }
+                                        $html .= '</ul>';
+                                    }
+                                    $html .= '</li>';
+                                }
+                                $html .= '</ul>';
+                                $html .= '</div>';
+                            }
+
+                            if ($canDelete->isEmpty()) {
+                                $html .= '<p class="text-center text-gray-500 dark:text-gray-400 text-xs pt-1">Tidak ada tukar tambah yang bisa dihapus dari pilihan ini.</p>';
+                            }
+
+                            $html .= '<div class="mt-4 p-3 bg-warning-50 dark:bg-warning-900/20 rounded-lg border border-warning-200 dark:border-warning-800">';
+                            $html .= '<p class="text-warning-800 dark:text-warning-200 text-xs"><strong>⚠️ Perhatian:</strong> Penjualan & pembelian terkait juga akan dihapus. Stok akan dikembalikan. Tindakan ini tidak dapat dibatalkan.</p>';
+                            $html .= '</div>';
+
+                            $html .= '</div>';
+
+                            return new \Illuminate\Support\HtmlString($html);
+                        })
+                        ->form([
+                            \Filament\Forms\Components\TextInput::make('password')
+                                ->label('Konfirmasi Password')
+                                ->password()
+                                ->required()
+                                ->placeholder('Masukkan password akun Anda'),
+                        ])
+                        ->modalSubmitActionLabel('🔥 Hapus yang Bisa Dihapus')
+                        ->modalCancelActionLabel('Batal')
+                        ->deselectRecordsAfterCompletion()
+                        ->action(function (\Illuminate\Database\Eloquent\Collection $records, array $data): void {
+                            $user = auth()->user();
+
+                            if (! $user || ! Hash::check($data['password'], $user->password)) {
+                                \Filament\Notifications\Notification::make()
+                                    ->title('Password salah')
+                                    ->body('Password yang Anda masukkan tidak sesuai.')
+                                    ->danger()
+                                    ->send();
+
+                                return;
+                            }
+
+                            \App\Models\Penjualan::$allowTukarTambahDeletion = true;
+                            \App\Models\Pembelian::$allowTukarTambahDeletion = true;
+
+                            $deleted = 0;
+                            $skipped = 0;
 
                             foreach ($records as $record) {
+                                if (! ($record->canDelete() && $record->getExternalPenjualanReferences()->isEmpty())) {
+                                    $skipped++;
+                                    continue;
+                                }
+
                                 try {
                                     $record->delete();
-                                    $deletedCount++;
-                                } catch (\Illuminate\Validation\ValidationException $e) {
-                                    $failedCount++;
-                                    $messages = collect($e->errors())
-                                        ->flatten()
-                                        ->implode(' ');
-                                    $failedMessages[] = "{$record->no_nota}: {$messages}";
-
-                                    $references = $record->getExternalPenjualanReferences();
-                                    foreach ($references as $ref) {
-                                        $failedReferences[] = $ref;
-                                    }
+                                    $deleted++;
+                                } catch (\Exception $e) {
+                                    $skipped++;
                                 }
                             }
 
-                            // Tutup modal terlebih dahulu
-                            $livewire->dispatch('close-modal', id: 'delete');
+                            \App\Models\Penjualan::$allowTukarTambahDeletion = false;
+                            \App\Models\Pembelian::$allowTukarTambahDeletion = false;
 
-                            if ($deletedCount > 0) {
-                                \Filament\Notifications\Notification::make()
-                                    ->title("{$deletedCount} tukar tambah berhasil dihapus")
-                                    ->success()
-                                    ->send();
+                            $body = "Berhasil menghapus {$deleted} tukar tambah.";
+                            if ($skipped > 0) {
+                                $body .= " {$skipped} dilewati karena tidak bisa dihapus.";
                             }
 
-                            if ($failedCount > 0) {
-                                // Notifikasi toast untuk yang gagal
-                                \Filament\Notifications\Notification::make()
-                                    ->title("{$failedCount} tukar tambah tidak bisa dihapus")
-                                    ->body('Item pembelian masih digunakan transaksi lain')
-                                    ->icon('heroicon-o-exclamation-triangle')
-                                    ->danger()
-                                    ->persistent()
-                                    ->send();
-
-                                $livewire->deleteBlockedMessage = implode("\n", $failedMessages);
-                                $livewire->deleteBlockedPenjualanReferences = collect($failedReferences)->unique('id')->values()->all();
-                                $livewire->replaceMountedAction('bulkDeleteBlocked');
-                            }
+                            \Filament\Notifications\Notification::make()
+                                ->title($deleted > 0 ? 'Hapus Selesai' : 'Tidak Ada yang Dihapus')
+                                ->body($body)
+                                ->color($deleted > 0 ? 'success' : 'warning')
+                                ->send();
                         }),
                 ]),
             ])
@@ -1463,7 +1608,7 @@ class TukarTambahResource extends BaseResource
                     ->relationship(
                         'karyawan',
                         'nama_karyawan',
-                        fn (Builder $query) => $query->whereHas('tukarTambah')
+                        fn(Builder $query) => $query->whereHas('tukarTambah')
                     )
                     ->searchable()
                     ->preload(),
@@ -1473,7 +1618,7 @@ class TukarTambahResource extends BaseResource
                     ->relationship(
                         'member',
                         'nama_member',
-                        fn (Builder $query) => $query->whereHas('tukarTambah')
+                        fn(Builder $query) => $query->whereHas('tukarTambah')
                     )
                     ->searchable()
                     ->preload(),
@@ -1499,13 +1644,13 @@ class TukarTambahResource extends BaseResource
                                 ->native(false)
                                 ->placeholder('Pilih tanggal')
                                 ->prefixIcon('heroicon-m-calendar')
-                                ->hidden(fn (Get $get) => $get('range') !== 'custom'),
+                                ->hidden(fn(Get $get) => $get('range') !== 'custom'),
                             DatePicker::make('until')
                                 ->label('Sampai')
                                 ->native(false)
                                 ->placeholder('Pilih tanggal')
                                 ->prefixIcon('heroicon-m-calendar')
-                                ->hidden(fn (Get $get) => $get('range') !== 'custom'),
+                                ->hidden(fn(Get $get) => $get('range') !== 'custom'),
                         ]),
                     ])
                     ->query(function (\Illuminate\Database\Eloquent\Builder $query, array $data): \Illuminate\Database\Eloquent\Builder {
@@ -1531,11 +1676,11 @@ class TukarTambahResource extends BaseResource
                             return $query
                                 ->when(
                                     $startDate,
-                                    fn (\Illuminate\Database\Eloquent\Builder $query, $date) => $query->whereDate('tanggal', '>=', $date),
+                                    fn(\Illuminate\Database\Eloquent\Builder $query, $date) => $query->whereDate('tanggal', '>=', $date),
                                 )
                                 ->when(
                                     $endDate,
-                                    fn (\Illuminate\Database\Eloquent\Builder $query, $date) => $query->whereDate('tanggal', '<=', $date),
+                                    fn(\Illuminate\Database\Eloquent\Builder $query, $date) => $query->whereDate('tanggal', '<=', $date),
                                 );
                         }
 
@@ -1549,7 +1694,7 @@ class TukarTambahResource extends BaseResource
 
                         return $query->when(
                             $targetDate,
-                            fn (\Illuminate\Database\Eloquent\Builder $query, $date) => $query->whereDate('tanggal', $date)
+                            fn(\Illuminate\Database\Eloquent\Builder $query, $date) => $query->whereDate('tanggal', $date)
                         );
                     })
                     ->indicateUsing(function (array $data): ?string {
@@ -1571,7 +1716,7 @@ class TukarTambahResource extends BaseResource
                                 $label .= \Carbon\Carbon::parse($from)->translatedFormat('d M Y');
                             }
                             if ($until) {
-                                $label .= ' s/d '.\Carbon\Carbon::parse($until)->translatedFormat('d M Y');
+                                $label .= ' s/d ' . \Carbon\Carbon::parse($until)->translatedFormat('d M Y');
                             }
 
                             return $label;
@@ -1584,7 +1729,7 @@ class TukarTambahResource extends BaseResource
                             '3_hari_lalu' => '3 Hari Lalu',
                         ];
 
-                        return isset($labels[$range]) ? 'Periode: '.$labels[$range] : null;
+                        return isset($labels[$range]) ? 'Periode: ' . $labels[$range] : null;
                     }),
             ])
             ->searchable()
@@ -1625,7 +1770,7 @@ class TukarTambahResource extends BaseResource
             ->distinct()
             ->orderBy('kondisi')
             ->pluck('kondisi')
-            ->mapWithKeys(fn (string $value): array => [$value => $labels[$value] ?? ucfirst($value)])
+            ->mapWithKeys(fn(string $value): array => [$value => $labels[$value] ?? ucfirst($value)])
             ->all();
     }
 
@@ -1668,7 +1813,7 @@ class TukarTambahResource extends BaseResource
         return PembelianItem::query()
             ->where($productColumn, $productId)
             ->where($qtyColumn, '>', 0)
-            ->when($condition, fn ($query, $condition) => $query->where('kondisi', $condition))
+            ->when($condition, fn($query, $condition) => $query->where('kondisi', $condition))
             ->orderBy('id_pembelian_item')
             ->first();
     }
@@ -1690,7 +1835,7 @@ class TukarTambahResource extends BaseResource
                                     ->icon('heroicon-m-document-text'),
                                 TextEntry::make('id_tukar_tambah')
                                     ->label('Kode')
-                                    ->state(fn (TukarTambah $record): string => $record->kode)
+                                    ->state(fn(TukarTambah $record): string => $record->kode)
                                     ->weight(FontWeight::Bold)
                                     ->size(TextEntrySize::Large)
                                     ->icon('heroicon-m-arrows-right-left'),
@@ -1699,6 +1844,28 @@ class TukarTambahResource extends BaseResource
                                     ->date('d F Y')
                                     ->icon('heroicon-m-calendar-days')
                                     ->color('gray'),
+                                TextEntry::make('status_dokumen')
+                                    ->label('Status Dokumen')
+                                    ->badge()
+                                    ->state(function (TukarTambah $record): string {
+                                        if ($record->isFinal() && $record->is_locked) {
+                                            return 'LOCKED';
+                                        }
+                                        if ($record->isFinal()) {
+                                            return 'FINAL';
+                                        }
+                                        if ($record->void_used) {
+                                            return 'VOIDED';
+                                        }
+                                        return 'DRAFT';
+                                    })
+                                    ->color(fn(string $state): string => match ($state) {
+                                        'DRAFT' => 'gray',
+                                        'FINAL' => 'success',
+                                        'LOCKED' => 'danger',
+                                        'VOIDED' => 'warning',
+                                        default => 'gray',
+                                    }),
                             ]),
 
                             // Tengah: Pelanggan & Karyawan
@@ -1719,7 +1886,7 @@ class TukarTambahResource extends BaseResource
                                 TextEntry::make('penjualan.no_nota')
                                     ->label('Nota Penjualan')
                                     ->icon('heroicon-m-receipt-percent')
-                                    ->url(fn (TukarTambah $record) => $record->penjualan
+                                    ->url(fn(TukarTambah $record) => $record->penjualan
                                         ? PenjualanResource::getUrl('view', ['record' => $record->penjualan])
                                         : null)
                                     ->openUrlInNewTab()
@@ -1727,7 +1894,7 @@ class TukarTambahResource extends BaseResource
                                 TextEntry::make('pembelian.no_po')
                                     ->label('Nota Pembelian')
                                     ->icon('heroicon-m-document-text')
-                                    ->url(fn (TukarTambah $record) => $record->pembelian
+                                    ->url(fn(TukarTambah $record) => $record->pembelian
                                         ? PembelianResource::getUrl('view', ['record' => $record->pembelian])
                                         : null)
                                     ->openUrlInNewTab()
@@ -1740,18 +1907,18 @@ class TukarTambahResource extends BaseResource
                 InfoSection::make('Daftar Barang Keluar')
                     ->description('Item yang dijual ke pelanggan')
                     ->icon('heroicon-o-arrow-up-tray')
-                    ->visible(fn (TukarTambah $record) => $record->penjualan?->items->isNotEmpty())
+                    ->visible(fn(TukarTambah $record) => $record->penjualan?->items->isNotEmpty())
                     ->schema([
                         \Filament\Infolists\Components\ViewEntry::make('penjualan_items_table')
                             ->hiddenLabel()
                             ->view('filament.infolists.components.tukar-tambah-barang-keluar-table')
-                            ->state(fn (TukarTambah $record) => $record->penjualan?->items->load('produk') ?? collect()),
+                            ->state(fn(TukarTambah $record) => $record->penjualan?->items->load('produk') ?? collect()),
                     ]),
 
                 // === DAFTAR JASA (PENJUALAN JASA ITEMS) ===
                 InfoSection::make('Daftar Jasa')
                     ->icon('hugeicons-tools')
-                    ->visible(fn (TukarTambah $record) => $record->penjualan?->jasaItems->isNotEmpty())
+                    ->visible(fn(TukarTambah $record) => $record->penjualan?->jasaItems->isNotEmpty())
                     ->schema([
                         RepeatableEntry::make('penjualan.jasaItems')
                             ->hiddenLabel()
@@ -1772,7 +1939,7 @@ class TukarTambahResource extends BaseResource
                                     ->prefix('Rp '),
                                 TextEntry::make('subtotal')
                                     ->label('Subtotal')
-                                    ->state(fn ($record) => ($record->qty ?? 0) * ($record->harga ?? 0))
+                                    ->state(fn($record) => ($record->qty ?? 0) * ($record->harga ?? 0))
                                     ->numeric(
                                         decimalPlaces: 0,
                                         decimalSeparator: ',',
@@ -1791,12 +1958,12 @@ class TukarTambahResource extends BaseResource
                 InfoSection::make('Daftar Barang Masuk')
                     ->description('Item yang dibeli dari pelanggan')
                     ->icon('heroicon-o-arrow-down-tray')
-                    ->visible(fn (TukarTambah $record) => $record->pembelian?->items->isNotEmpty())
+                    ->visible(fn(TukarTambah $record) => $record->pembelian?->items->isNotEmpty())
                     ->schema([
                         \Filament\Infolists\Components\ViewEntry::make('pembelian_items_table')
                             ->hiddenLabel()
                             ->view('filament.infolists.components.tukar-tambah-barang-masuk-table')
-                            ->state(fn (TukarTambah $record) => $record->pembelian?->items->load('produk') ?? collect()),
+                            ->state(fn(TukarTambah $record) => $record->pembelian?->items->load('produk') ?? collect()),
                     ]),
 
                 // === RINGKASAN PEMBAYARAN (SPLIT LAYOUT) ===
@@ -1812,8 +1979,8 @@ class TukarTambahResource extends BaseResource
                                         if (! $penjualan) {
                                             return 0;
                                         }
-                                        $productTotal = $penjualan->items->sum(fn ($item) => ($item->qty ?? 0) * ($item->harga_jual ?? 0));
-                                        $serviceTotal = $penjualan->jasaItems->sum(fn ($item) => ($item->qty ?? 0) * ($item->harga ?? 0));
+                                        $productTotal = $penjualan->items->sum(fn($item) => ($item->qty ?? 0) * ($item->harga_jual ?? 0));
+                                        $serviceTotal = $penjualan->jasaItems->sum(fn($item) => ($item->qty ?? 0) * ($item->harga ?? 0));
                                         $diskon = (int) ($penjualan->diskon_total ?? 0);
 
                                         return max(0, ($productTotal + $serviceTotal) - $diskon);
@@ -1836,7 +2003,7 @@ class TukarTambahResource extends BaseResource
                                             return 0;
                                         }
 
-                                        return $pembelian->items->sum(fn ($item) => ($item->qty ?? 0) * ($item->hpp ?? 0));
+                                        return $pembelian->items->sum(fn($item) => ($item->qty ?? 0) * ($item->hpp ?? 0));
                                     })
                                     ->numeric(
                                         decimalPlaces: 0,
@@ -1858,15 +2025,15 @@ class TukarTambahResource extends BaseResource
 
                                         $penjualanTotal = 0;
                                         if ($penjualan) {
-                                            $productTotal = $penjualan->items->sum(fn ($item) => ($item->qty ?? 0) * ($item->harga_jual ?? 0));
-                                            $serviceTotal = $penjualan->jasaItems->sum(fn ($item) => ($item->qty ?? 0) * ($item->harga ?? 0));
+                                            $productTotal = $penjualan->items->sum(fn($item) => ($item->qty ?? 0) * ($item->harga_jual ?? 0));
+                                            $serviceTotal = $penjualan->jasaItems->sum(fn($item) => ($item->qty ?? 0) * ($item->harga ?? 0));
                                             $diskon = (int) ($penjualan->diskon_total ?? 0);
                                             $penjualanTotal = max(0, ($productTotal + $serviceTotal) - $diskon);
                                         }
 
                                         $pembelianTotal = 0;
                                         if ($pembelian) {
-                                            $pembelianTotal = $pembelian->items->sum(fn ($item) => ($item->qty ?? 0) * ($item->hpp ?? 0));
+                                            $pembelianTotal = $pembelian->items->sum(fn($item) => ($item->qty ?? 0) * ($item->hpp ?? 0));
                                         }
 
                                         return $penjualanTotal - $pembelianTotal;
@@ -1883,7 +2050,7 @@ class TukarTambahResource extends BaseResource
 
                                 TextEntry::make('total_dibayar_penjualan')
                                     ->label('Dibayar (Penjualan)')
-                                    ->state(fn (TukarTambah $record): float => (float) ($record->penjualan?->pembayaran->sum('jumlah') ?? 0))
+                                    ->state(fn(TukarTambah $record): float => (float) ($record->penjualan?->pembayaran->sum('jumlah') ?? 0))
                                     ->numeric(
                                         decimalPlaces: 0,
                                         decimalSeparator: ',',
@@ -1894,7 +2061,7 @@ class TukarTambahResource extends BaseResource
 
                                 TextEntry::make('total_dibayar_pembelian')
                                     ->label('Dibayar (Pembelian)')
-                                    ->state(fn (TukarTambah $record): float => (float) ($record->pembelian?->pembayaran->sum('jumlah') ?? 0))
+                                    ->state(fn(TukarTambah $record): float => (float) ($record->pembelian?->pembayaran->sum('jumlah') ?? 0))
                                     ->numeric(
                                         decimalPlaces: 0,
                                         decimalSeparator: ',',
@@ -1909,9 +2076,9 @@ class TukarTambahResource extends BaseResource
                 // === RINCIAN PEMBAYARAN PENJUALAN ===
                 InfoSection::make('Rincian Pembayaran Penjualan')
                     ->icon('heroicon-o-banknotes')
-                    ->visible(fn (TukarTambah $record) => $record->penjualan?->pembayaran->isNotEmpty())
+                    ->visible(fn(TukarTambah $record) => $record->penjualan?->pembayaran->isNotEmpty())
                     ->collapsible()
-                    ->collapsed(fn (TukarTambah $record) => $record->penjualan?->pembayaran->isEmpty())
+                    ->collapsed(fn(TukarTambah $record) => $record->penjualan?->pembayaran->isEmpty())
                     ->schema([
                         RepeatableEntry::make('penjualan.pembayaran')
                             ->hiddenLabel()
@@ -1922,7 +2089,7 @@ class TukarTambahResource extends BaseResource
                                 TextEntry::make('metode_bayar')
                                     ->label('Metode')
                                     ->badge()
-                                    ->formatStateUsing(fn (string $state): string => match ($state) {
+                                    ->formatStateUsing(fn(string $state): string => match ($state) {
                                         'cash' => 'Tunai',
                                         'transfer' => 'Transfer',
                                         default => $state,
@@ -1948,9 +2115,9 @@ class TukarTambahResource extends BaseResource
                 // === RINCIAN PEMBAYARAN PEMBELIAN ===
                 InfoSection::make('Rincian Pembayaran Pembelian')
                     ->icon('heroicon-o-banknotes')
-                    ->visible(fn (TukarTambah $record) => $record->pembelian?->pembayaran->isNotEmpty())
+                    ->visible(fn(TukarTambah $record) => $record->pembelian?->pembayaran->isNotEmpty())
                     ->collapsible()
-                    ->collapsed(fn (TukarTambah $record) => $record->pembelian?->pembayaran->isEmpty())
+                    ->collapsed(fn(TukarTambah $record) => $record->pembelian?->pembayaran->isEmpty())
                     ->schema([
                         RepeatableEntry::make('pembelian.pembayaran')
                             ->hiddenLabel()
@@ -1961,7 +2128,7 @@ class TukarTambahResource extends BaseResource
                                 TextEntry::make('metode_bayar')
                                     ->label('Metode')
                                     ->badge()
-                                    ->formatStateUsing(fn (string $state): string => match ($state) {
+                                    ->formatStateUsing(fn(string $state): string => match ($state) {
                                         'cash' => 'Tunai',
                                         'transfer' => 'Transfer',
                                         default => $state,
@@ -1987,7 +2154,7 @@ class TukarTambahResource extends BaseResource
                 // === CATATAN ===
                 InfoSection::make('Catatan')
                     ->icon('heroicon-o-pencil-square')
-                    ->visible(fn (TukarTambah $record) => filled($record->catatan))
+                    ->visible(fn(TukarTambah $record) => filled($record->catatan))
                     ->collapsible()
                     ->schema([
                         TextEntry::make('catatan')
@@ -2000,7 +2167,7 @@ class TukarTambahResource extends BaseResource
                 InfoSection::make('Bukti & Dokumentasi')
                     ->icon('heroicon-o-camera')
                     ->visible(
-                        fn (TukarTambah $record) => ! empty($record->foto_dokumen) ||
+                        fn(TukarTambah $record) => ! empty($record->foto_dokumen) ||
                             $record->penjualan?->pembayaran->whereNotNull('bukti_transfer')->isNotEmpty() ||
                             $record->pembelian?->pembayaran->whereNotNull('bukti_transfer')->isNotEmpty()
                     )
@@ -2008,7 +2175,7 @@ class TukarTambahResource extends BaseResource
                         \Filament\Infolists\Components\ViewEntry::make('all_photos_gallery')
                             ->hiddenLabel()
                             ->view('filament.infolists.components.tukar-tambah-photos-gallery')
-                            ->state(fn (TukarTambah $record) => [
+                            ->state(fn(TukarTambah $record) => [
                                 'foto_dokumen' => $record->foto_dokumen ?? [],
                                 'bukti_penjualan' => $record->penjualan?->pembayaran->whereNotNull('bukti_transfer')->pluck('bukti_transfer')->toArray() ?? [],
                                 'bukti_pembelian' => $record->pembelian?->pembayaran->whereNotNull('bukti_transfer')->pluck('bukti_transfer')->toArray() ?? [],
@@ -2044,8 +2211,8 @@ class TukarTambahResource extends BaseResource
         $penjualan = $record->penjualan;
         $penjualanTotal = 0;
         if ($penjualan) {
-            $productTotal = $penjualan->items->sum(fn ($item) => (int) ($item->qty ?? 0) * (int) ($item->harga_jual ?? 0));
-            $serviceTotal = $penjualan->jasaItems->sum(fn ($jasa) => (int) ($jasa->qty ?? 0) * (int) ($jasa->harga ?? 0));
+            $productTotal = $penjualan->items->sum(fn($item) => (int) ($item->qty ?? 0) * (int) ($item->harga_jual ?? 0));
+            $serviceTotal = $penjualan->jasaItems->sum(fn($jasa) => (int) ($jasa->qty ?? 0) * (int) ($jasa->harga ?? 0));
             $penjualanTotal = $productTotal + $serviceTotal;
         }
 
@@ -2053,7 +2220,7 @@ class TukarTambahResource extends BaseResource
         $pembelian = $record->pembelian;
         $pembelianTotal = 0;
         if ($pembelian) {
-            $pembelianTotal = $pembelian->items->sum(fn ($item) => (int) ($item->qty ?? 0) * (int) ($item->hpp ?? 0));
+            $pembelianTotal = $pembelian->items->sum(fn($item) => (int) ($item->qty ?? 0) * (int) ($item->hpp ?? 0));
         }
 
         // Grand Total = Penjualan - Pembelian
@@ -2061,42 +2228,39 @@ class TukarTambahResource extends BaseResource
     }
 
     /**
-     * Hitung status pembayaran: LUNAS, DP, TEMPO
+     * Hitung status pembayaran: LUNAS / TEMPO (sama seperti Penjualan & Pembelian standar)
      */
     protected static function calculatePaymentStatus(TukarTambah $record): string
     {
-        // Calculate Penjualan total (products + services) - using eager loaded data
+        // Calculate Penjualan total (products + services)
         $penjualan = $record->penjualan;
         $totalPenjualan = 0;
         $totalDibayarPenjualan = 0;
         if ($penjualan) {
-            $productTotal = $penjualan->items->sum(fn ($item) => (int) ($item->qty ?? 0) * (int) ($item->harga_jual ?? 0));
-            $serviceTotal = $penjualan->jasaItems->sum(fn ($jasa) => (int) ($jasa->qty ?? 0) * (int) ($jasa->harga ?? 0));
+            $productTotal = $penjualan->items->sum(fn($item) => (int) ($item->qty ?? 0) * (int) ($item->harga_jual ?? 0));
+            $serviceTotal = $penjualan->jasaItems->sum(fn($jasa) => (int) ($jasa->qty ?? 0) * (int) ($jasa->harga ?? 0));
             $totalPenjualan = $productTotal + $serviceTotal;
             $totalDibayarPenjualan = $penjualan->pembayaran->sum('jumlah');
         }
 
-        // Calculate Pembelian total (qty * hpp) - using eager loaded data
+        // Calculate Pembelian total (qty * hpp)
         $pembelian = $record->pembelian;
         $totalPembelian = 0;
         $totalDibayarPembelian = 0;
         if ($pembelian) {
-            $totalPembelian = $pembelian->items->sum(fn ($item) => (int) ($item->qty ?? 0) * (int) ($item->hpp ?? 0));
+            $totalPembelian = $pembelian->items->sum(fn($item) => (int) ($item->qty ?? 0) * (int) ($item->hpp ?? 0));
             $totalDibayarPembelian = $pembelian->pembayaran->sum('jumlah');
         }
 
-        // TEMPO: both payments are 0
-        if ($totalDibayarPenjualan == 0 && $totalDibayarPembelian == 0) {
-            return 'TEMPO';
+        $grandTotal = $totalPenjualan - $totalPembelian;
+        $netPaid = $totalDibayarPenjualan - $totalDibayarPembelian;
+
+        // Handle negative grand total (toko harus bayar pelanggan)
+        if ($grandTotal <= 0) {
+            return $netPaid <= $grandTotal ? 'LUNAS' : 'TEMPO';
         }
 
-        // LUNAS: both fully paid
-        if ($totalPenjualan == $totalDibayarPenjualan && $totalPembelian == $totalDibayarPembelian) {
-            return 'LUNAS';
-        }
-
-        // DP: partial payment
-        return 'DP';
+        return $netPaid >= $grandTotal ? 'LUNAS' : 'TEMPO';
     }
 
     /**
