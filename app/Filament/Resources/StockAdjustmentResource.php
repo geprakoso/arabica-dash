@@ -87,20 +87,22 @@ class StockAdjustmentResource extends BaseResource
                                         ->schema([
                                             Select::make('produk_id')
                                                 ->label('Produk')
-                                                ->options(fn () => PenjualanResource::getAvailableProductOptions())
+                                                ->options(fn() => PenjualanResource::getAvailableProductOptions())
                                                 ->searchable()
+                                                ->allowHtml()
                                                 ->preload()
                                                 ->required()
                                                 ->reactive()
                                                 ->native(false)
-                                                ->afterStateUpdated(fn (Set $set) => $set('pembelian_item_id', null))
+                                                ->afterStateUpdated(fn(Set $set) => $set('pembelian_item_id', null))
+
                                                 ->columnSpan(2),
                                             Select::make('pembelian_item_id')
                                                 ->label('Batch')
-                                                ->options(fn (Get $get) => PenjualanResource::getBatchOptions($get('produk_id') ? (int) $get('produk_id') : null))
+                                                ->options(fn(Get $get) => PenjualanResource::getBatchOptions($get('produk_id') ? (int) $get('produk_id') : null))
                                                 ->required()
                                                 ->native(false)
-                                                ->disabled(fn (Get $get) => ! $get('produk_id'))
+                                                ->disabled(fn(Get $get) => ! $get('produk_id'))
                                                 ->columnSpan(1),
                                             TextInput::make('qty')
                                                 ->label('Qty (+/-)')
@@ -118,9 +120,9 @@ class StockAdjustmentResource extends BaseResource
                                         ->defaultItems(1)
                                         ->addActionLabel('Tambah Item')
                                         ->collapseAllAction(
-                                            fn ($action) => $action->label('Tutup Semua'),
+                                            fn($action) => $action->label('Tutup Semua'),
                                         )
-                                        ->itemLabel(fn (array $state): ?string => $state['produk_id'] ?? null ? (PenjualanResource::getAvailableProductOptions()[$state['produk_id']] ?? 'Item') : 'Item Baru'),
+                                        ->itemLabel(fn(array $state): ?string => $state['produk_id'] ?? null ? strip_tags(PenjualanResource::getAvailableProductOptions()[$state['produk_id']] ?? 'Item') : 'Item Baru'),
                                 ]),
                         ])
                         ->columnSpan(['lg' => 2]),
@@ -135,7 +137,7 @@ class StockAdjustmentResource extends BaseResource
                                         ->label('Kode Referensi')
                                         ->prefixIcon('heroicon-o-tag')
                                         ->disabled()
-                                        ->default(fn () => StockAdjustment::generateKode())
+                                        ->default(fn() => StockAdjustment::generateKode())
                                         ->dehydrated()
                                         ->readOnly(),
 
@@ -144,13 +146,13 @@ class StockAdjustmentResource extends BaseResource
                                         ->prefixIcon('heroicon-o-pencil')
                                         ->default('draft')
                                         ->disabled()
-                                        ->formatStateUsing(fn (string $state): string => ucfirst($state)),
+                                        ->formatStateUsing(fn(string $state): string => ucfirst($state)),
 
                                     // Placeholder for created_at if we want to show it on edit
                                     Placeholder::make('created_at')
                                         ->label('Dibuat Pada')
-                                        ->visible(fn ($record) => $record !== null)
-                                        ->content(fn ($record) => $record?->created_at?->toFormattedDateString()),
+                                        ->visible(fn($record) => $record !== null)
+                                        ->content(fn($record) => $record?->created_at?->toFormattedDateString()),
                                 ])
                                 ->columnSpan(['lg' => 1]),
                         ])
@@ -188,7 +190,7 @@ class StockAdjustmentResource extends BaseResource
                         'warning' => 'draft',
                         'success' => 'posted',
                     ])
-                    ->icon(fn (string $state): string => match ($state) {
+                    ->icon(fn(string $state): string => match ($state) {
                         'draft' => 'heroicon-m-pencil',
                         'posted' => 'heroicon-m-check-circle',
                         default => 'heroicon-m-question-mark-circle',
@@ -216,16 +218,16 @@ class StockAdjustmentResource extends BaseResource
                     ->button()
                     ->icon('heroicon-m-paper-airplane')
                     ->color('success')
-                    ->visible(fn (StockAdjustment $record) => ! $record->isPosted())
+                    ->visible(fn(StockAdjustment $record) => ! $record->isPosted())
                     ->requiresConfirmation()
                     ->modalHeading('Konfirmasi Posting Penyesuaian Stok')
                     ->modalDescription(function (StockAdjustment $record): string {
                         $summary = $record->getSummary();
                         return "Total Item: {$summary['total_items']}\n" .
-                               "Penambahan (+): {$summary['total_penambahan']}\n" .
-                               "Pengurangan (-): {$summary['total_pengurangan']}\n" .
-                               "Tanpa Perubahan: {$summary['total_tanpa_perubahan']}\n\n" .
-                               "Posting akan mengubah stok secara permanen. Lanjutkan?";
+                            "Penambahan (+): {$summary['total_penambahan']}\n" .
+                            "Pengurangan (-): {$summary['total_pengurangan']}\n" .
+                            "Tanpa Perubahan: {$summary['total_tanpa_perubahan']}\n\n" .
+                            "Posting akan mengubah stok secara permanen. Lanjutkan?";
                     })
                     ->modalSubmitActionLabel('Ya, Posting')
                     ->action(function (StockAdjustment $record) {
@@ -237,7 +239,6 @@ class StockAdjustmentResource extends BaseResource
                                 ->body("Kode {$record->kode} berhasil diposting. Stok telah diperbarui.")
                                 ->success()
                                 ->send();
-
                         } catch (\Illuminate\Validation\ValidationException $e) {
                             $errors = $e->validator->errors()->all();
 
@@ -247,7 +248,6 @@ class StockAdjustmentResource extends BaseResource
                                 ->danger()
                                 ->persistent()
                                 ->send();
-
                         } catch (\Exception $e) {
                             Notification::make()
                                 ->title('Gagal Memposting Penyesuaian Stok')
@@ -263,7 +263,7 @@ class StockAdjustmentResource extends BaseResource
                     ->color('danger')
                     ->icon('heroicon-m-trash')
                     ->requiresConfirmation()
-                    ->visible(fn (StockAdjustment $record) => ! $record->isPosted()),
+                    ->visible(fn(StockAdjustment $record) => ! $record->isPosted()),
                 Tables\Actions\ActionGroup::make([
                     Tables\Actions\EditAction::make()
                         ->color('primary'),
@@ -272,7 +272,7 @@ class StockAdjustmentResource extends BaseResource
                     ->label('Aksi')
                     ->tooltip('Menu Aksi')
                     ->icon('heroicon-o-ellipsis-vertical')
-                    ->visible(fn (StockAdjustment $record) => ! $record->isPosted()),
+                    ->visible(fn(StockAdjustment $record) => ! $record->isPosted()),
             ])
             ->bulkActions([
                 Tables\Actions\BulkActionGroup::make([

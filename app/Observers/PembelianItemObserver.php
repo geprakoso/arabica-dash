@@ -21,9 +21,35 @@ class PembelianItemObserver
         }
 
         // ✅ Sync qty_sisa ke StockBatch agar tetap konsisten
+        // Jika StockBatch belum ada (misal dari data lama), buat baru
         $batch = $pembelianItem->stockBatch;
         if ($batch) {
             $batch->update(['qty_available' => $pembelianItem->qty_sisa]);
+        } elseif ($pembelianItem->qty_sisa > 0) {
+            $qtySisa = (int) $pembelianItem->qty_sisa;
+            $batch = \App\Models\StockBatch::create([
+                'pembelian_item_id' => $pembelianItem->id_pembelian_item,
+                'produk_id' => $pembelianItem->id_produk ?? $pembelianItem->produk_id ?? $pembelianItem->id_barang,
+                'qty_total' => $pembelianItem->qty ?? $qtySisa,
+                'qty_available' => $qtySisa,
+            ]);
+
+            \App\Models\StockMutation::create([
+                'stock_batch_id' => $batch->id,
+                'type' => 'initial_sync',
+                'qty_change' => $qtySisa,
+                'qty_before' => 0,
+                'qty_after' => $qtySisa,
+                'reference_type' => 'PembelianItem',
+                'reference_id' => $pembelianItem->id_pembelian_item,
+                'notes' => 'Auto-created missing batch via Observer',
+            ]);
+
+            Log::info('PembelianItemObserver: Created missing StockBatch', [
+                'pembelian_item_id' => $pembelianItem->id_pembelian_item,
+                'stock_batch_id' => $batch->id,
+                'qty_available' => $qtySisa,
+            ]);
         }
 
         $this->dispatchSyncIfNeeded($pembelianItem, 'updated');

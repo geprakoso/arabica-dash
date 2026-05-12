@@ -90,11 +90,22 @@ class PembelianItem extends Model
         // R01: Auto-create stock batch dan stock mutation saat item dibuat
         static::created(function (PembelianItem $item): void {
             if ($item->qty > 0) {
+                $existingBatch = StockBatch::where('pembelian_item_id', $item->id_pembelian_item)->first();
+
+                if ($existingBatch) {
+                    \Illuminate\Support\Facades\Log::info('PembelianItem::created: StockBatch already exists', [
+                        'pembelian_item_id' => $item->id_pembelian_item,
+                        'stock_batch_id' => $existingBatch->id,
+                    ]);
+                    return;
+                }
+
+                $qtyAvailable = (int) ($item->qty_sisa ?? $item->qty_masuk ?? $item->qty);
                 $stockBatch = StockBatch::create([
                     'pembelian_item_id' => $item->id_pembelian_item,
                     'produk_id' => $item->id_produk ?? $item->produk_id ?? $item->id_barang,
                     'qty_total' => $item->qty,
-                    'qty_available' => $item->qty_sisa ?? $item->qty_masuk ?? $item->qty,
+                    'qty_available' => $qtyAvailable,
                 ]);
 
                 $isTukarTambah = $item->pembelian?->tukarTambah()->exists();
@@ -110,7 +121,7 @@ class PembelianItem extends Model
                     'type' => $mutationType,
                     'qty_change' => $item->qty,
                     'qty_before' => 0,
-                    'qty_after' => $item->qty_sisa ?? $item->qty_masuk ?? $item->qty,
+                    'qty_after' => $qtyAvailable,
                     'reference_type' => $referenceType,
                     'reference_id' => $referenceId,
                     'notes' => $notesPrefix . ': ' . $item->qty . ' unit',

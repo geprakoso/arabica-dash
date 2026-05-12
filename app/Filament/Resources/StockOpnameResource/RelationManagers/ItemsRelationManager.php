@@ -27,6 +27,7 @@ class ItemsRelationManager extends RelationManager
                 ->label('Produk')
                 ->options(fn() => PenjualanResource::getAvailableProductOptions())
                 ->searchable()
+                ->allowHtml()
                 ->preload()
                 ->required()
                 ->reactive()
