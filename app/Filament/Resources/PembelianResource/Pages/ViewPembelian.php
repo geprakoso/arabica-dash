@@ -47,6 +47,42 @@ class ViewPembelian extends ViewRecord
     protected function getHeaderActions(): array
     {
         return [
+            // POST: Draft -> Final
+            Action::make('post')
+                ->label('Posting')
+                ->icon('heroicon-m-check-circle')
+                ->color('success')
+                ->visible(fn() => $this->record->canPost())
+                ->requiresConfirmation()
+                ->modalHeading('Posting Pembelian')
+                ->modalDescription('Setelah di-post, pembelian akan final dan tidak bisa diubah kecuali di-void 1x. Lanjutkan?')
+                ->action(function (): void {
+                    $this->record->post();
+                    Notification::make()
+                        ->title('Pembelian berhasil di-post')
+                        ->success()
+                        ->send();
+                    $this->refreshFormData(['status_dokumen']);
+                }),
+
+            // VOID: Final -> Draft (1x)
+            Action::make('void')
+                ->label('Void')
+                ->icon('heroicon-m-arrow-uturn-left')
+                ->color('warning')
+                ->visible(fn() => $this->record->canVoid())
+                ->requiresConfirmation()
+                ->modalHeading('Void Pembelian ke Draft')
+                ->modalDescription("Anda hanya bisa melakukan ini 1 kali.\n\nSetelah di-void:\n• Status kembali ke Draft\n• Item tetap terkunci (tidak bisa diedit)\n• Hanya Pembayaran yang bisa diubah\n\nLanjutkan?")
+                ->action(function (): void {
+                    $this->record->voidToDraft();
+                    Notification::make()
+                        ->title('Pembelian di-void ke Draft')
+                        ->warning()
+                        ->send();
+                    $this->refreshFormData(['status_dokumen']);
+                }),
+
             Action::make('upload_dokumen')
                 ->label('Upload Foto')
                 ->icon('heroicon-m-camera')
@@ -93,9 +129,9 @@ class ViewPembelian extends ViewRecord
                 }),
 
             Action::make('edit')
-                ->label('Ubah')
+                ->label('Ubah Pembayaran')
                 ->icon('heroicon-m-pencil-square')
-                ->visible(fn() => ! $this->record->is_locked)
+                ->visible(fn() => $this->record->canEditPayment())
                 ->action(function (): void {
                     $this->redirect(PembelianResource::getUrl('edit', ['record' => $this->record]));
                 }),

@@ -25,15 +25,14 @@ class EditPembelian extends EditRecord
     public function mount(int | string $record): void
     {
         parent::mount($record);
-        
-        // R16: Redirect jika sudah locked
-        if ($this->record->is_locked) {
+
+        if (! $this->record->canEditPayment()) {
             Notification::make()
                 ->title('Akses Ditolak')
                 ->body('Data pembelian sudah dikunci dan tidak dapat diedit.')
                 ->danger()
                 ->send();
-                
+
             $this->redirect(PembelianResource::getUrl('view', ['record' => $this->record]));
         }
     }

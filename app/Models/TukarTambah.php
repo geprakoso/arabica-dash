@@ -237,9 +237,11 @@ class TukarTambah extends Model
                 'posted_by_id' => auth()->id(),
             ]);
 
-            // Sync Penjualan & Pembelian
             $this->penjualan?->update(['status_dokumen' => 'final']);
-            $this->pembelian?->update(['is_locked' => true]);
+            $this->pembelian?->update([
+                'status_dokumen' => 'final',
+                'is_locked' => true,
+            ]);
         });
     }
 
@@ -256,14 +258,20 @@ class TukarTambah extends Model
             'voided_by_id' => auth()->id(),
         ]);
 
-        // Penjualan: kembali ke draft (sama seperti Penjualan standar)
         $this->penjualan?->update([
             'status_dokumen' => 'draft',
             'void_used' => true,
             'voided_at' => now(),
             'voided_by_id' => auth()->id(),
         ]);
-        // Pembelian tetap locked
+
+        $this->pembelian?->update([
+            'status_dokumen' => 'draft',
+            'is_locked' => false,
+            'void_used' => true,
+            'voided_at' => now(),
+            'voided_by_id' => auth()->id(),
+        ]);
     }
 
     public function lockFinal(): void
@@ -273,9 +281,18 @@ class TukarTambah extends Model
         }
 
         DB::transaction(function (): void {
-            $this->update(['is_locked' => true]);
-            $this->penjualan?->update(['is_locked' => true]);
-            $this->pembelian?->update(['is_locked' => true]);
+            $this->update([
+                'status_dokumen' => 'locked',
+                'is_locked' => true,
+            ]);
+            $this->penjualan?->update([
+                'status_dokumen' => 'locked',
+                'is_locked' => true,
+            ]);
+            $this->pembelian?->update([
+                'status_dokumen' => 'final',
+                'is_locked' => true,
+            ]);
         });
     }
 
