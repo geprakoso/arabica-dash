@@ -28,7 +28,7 @@ class ListPembelians extends ListRecords
         return [
             Actions\CreateAction::make()
                 ->label('Tambah Pembelian')
-                ->icon('heroicon-s-plus'),
+                ->icon('hugeicons-plus-sign'),
         ];
     }
 
@@ -42,15 +42,15 @@ class ListPembelians extends ListRecords
 
             'draft' => Tab::make('Draft')
                 ->icon('heroicon-o-pencil')
-                ->badge(Pembelian::where('is_locked', false)->count())
+                ->badge(Pembelian::where('status_dokumen', 'draft')->count())
                 ->badgeColor('warning')
-                ->modifyQueryUsing(fn (Builder $query) => $query->where('is_locked', false)),
+                ->modifyQueryUsing(fn(Builder $query) => $query->where('status_dokumen', 'draft')),
 
             'final' => Tab::make('Final')
                 ->icon('heroicon-o-check-circle')
-                ->badge(Pembelian::where('is_locked', true)->count())
+                ->badge(Pembelian::whereIn('status_dokumen', ['final', 'locked'])->count())
                 ->badgeColor('success')
-                ->modifyQueryUsing(fn (Builder $query) => $query->where('is_locked', true)),
+                ->modifyQueryUsing(fn(Builder $query) => $query->whereIn('status_dokumen', ['final', 'locked'])),
         ];
     }
 

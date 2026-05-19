@@ -265,7 +265,7 @@ class CreateTukarTambah extends CreateRecord
                 // If final mode, sync Penjualan & Pembelian status
                 if ($isFinal) {
                     $penjualan->update(['status_dokumen' => 'final']);
-                    $pembelian->update(['is_locked' => true]);
+                    $pembelian->update(['status_dokumen' => 'final']);
                 }
 
                 return $tukarTambah;

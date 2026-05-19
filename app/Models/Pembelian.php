@@ -31,10 +31,15 @@ class Pembelian extends Model
         'id_karyawan',
         'id_supplier',
         'foto_dokumen',
-        // R11, R16: Fields dari Purchase Module Policy
         'grand_total',
         'total_paid',
+        'status_dokumen',
         'is_locked',
+        'void_used',
+        'posted_at',
+        'posted_by_id',
+        'voided_at',
+        'voided_by_id',
         'no_tt',
     ];
 
@@ -43,6 +48,10 @@ class Pembelian extends Model
         static::creating(function (Pembelian $pembelian): void {
             if (blank($pembelian->no_po)) {
                 $pembelian->no_po = self::generateUniquePO();
+            }
+
+            if (blank($pembelian->status_dokumen)) {
+                $pembelian->status_dokumen = 'draft';
             }
         });
 
@@ -182,10 +191,12 @@ class Pembelian extends Model
         'tgl_tempo' => 'date',
         'harga_jual' => 'decimal:2',
         'foto_dokumen' => 'array',
-        // R11, R16: Casts dari Purchase Module Policy
         'grand_total' => 'decimal:2',
         'total_paid' => 'decimal:2',
         'is_locked' => 'boolean',
+        'void_used' => 'boolean',
+        'posted_at' => 'datetime',
+        'voided_at' => 'datetime',
     ];
 
     /**
@@ -212,32 +223,106 @@ class Pembelian extends Model
         return max(0, (float) $paid - (float) $total);
     }
 
-    /**
-     * R16: Lock Final - mengunci data dari edit
-     * Irreversible: tidak bisa dibuka kembali
-     *
-     * @throws \Exception
-     */
-    public function lockFinal(): void
+    // ============================================================
+    // STATE MACHINE
+    // draft → final → locked
+    // final → draft (void, 1x only)
+    // Item TIDAK bisa diedit, hanya pembayaran yang bisa diedit
+    // ============================================================
+
+    public function isDraft(): bool
     {
-        if ($this->is_locked) {
-            throw new \Exception('Data pembelian sudah terkunci');
+        return $this->status_dokumen === 'draft';
+    }
+
+    public function isFinal(): bool
+    {
+        return $this->status_dokumen === 'final';
+    }
+
+    public function isLocked(): bool
+    {
+        return $this->status_dokumen === 'locked';
+    }
+
+    public function isVoided(): bool
+    {
+        return $this->status_dokumen === 'voided';
+    }
+
+    public function canEditItems(): bool
+    {
+        return false;
+    }
+
+    public function canEditPayment(): bool
+    {
+        return $this->isDraft() && ! $this->is_locked;
+    }
+
+    public function canPost(): bool
+    {
+        return $this->isDraft() && ! $this->is_locked;
+    }
+
+    public function canVoid(): bool
+    {
+        return $this->isFinal()
+            && ! $this->is_locked
+            && ! $this->void_used;
+    }
+
+    public function canLock(): bool
+    {
+        return $this->isFinal() && ! $this->is_locked;
+    }
+
+    public function canEdit(): bool
+    {
+        return $this->canEditPayment();
+    }
+
+    public function post(): void
+    {
+        if (! $this->canPost()) {
+            throw new \RuntimeException('Pembelian tidak bisa di-post.');
         }
 
-        // R11: Pastikan grand_total sudah di-set sebelum lock
         if (is_null($this->grand_total) || $this->grand_total <= 0) {
             $this->grand_total = $this->calculateTotalPembelianCached();
         }
 
-        $this->update(['is_locked' => true]);
+        $this->update([
+            'status_dokumen' => 'final',
+            'posted_at' => now(),
+            'posted_by_id' => auth()->id(),
+        ]);
     }
 
-    /**
-     * R16: Cek apakah data bisa diedit
-     */
-    public function canEdit(): bool
+    public function voidToDraft(): void
     {
-        return ! $this->is_locked;
+        if (! $this->canVoid()) {
+            throw new \RuntimeException('Pembelian tidak bisa di-void.');
+        }
+
+        $this->update([
+            'status_dokumen' => 'draft',
+            'void_used' => true,
+            'voided_at' => now(),
+            'voided_by_id' => auth()->id(),
+        ]);
+    }
+
+    public function lockFinal(): void
+    {
+        if (! $this->canLock()) {
+            throw new \RuntimeException('Pembelian tidak bisa di-lock.');
+        }
+
+        $this->update([
+            'status_dokumen' => 'locked',
+            'is_locked' => true,
+        ]);
     }
 
     /**
