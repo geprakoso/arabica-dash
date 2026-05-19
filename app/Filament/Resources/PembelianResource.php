@@ -861,13 +861,13 @@ class PembelianResource extends BaseResource
                     ->label('Status')
                     ->badge()
                     ->state(function (Pembelian $record): string {
-                        if ($record->isLocked()) {
+                        if ($record->isFinal() && $record->is_locked) {
                             return 'LOCKED';
                         }
                         if ($record->isFinal()) {
                             return 'FINAL';
                         }
-                        if ($record->isVoided() || $record->void_used) {
+                        if ($record->void_used) {
                             return 'VOIDED';
                         }
                         return 'DRAFT';
@@ -1089,24 +1089,6 @@ class PembelianResource extends BaseResource
                         \Filament\Notifications\Notification::make()
                             ->title('Pembelian di-void ke Draft')
                             ->warning()
-                            ->send();
-                    }),
-
-                // LOCK: Final -> Locked
-                Action::make('lock')
-                    ->label('')
-                    ->icon('heroicon-m-lock-closed')
-                    ->tooltip('Lock Final')
-                    ->color('danger')
-                    ->visible(fn(Pembelian $record) => $record->canLock())
-                    ->requiresConfirmation()
-                    ->modalHeading('Lock Pembelian')
-                    ->modalDescription('Pembelian akan terkunci permanen. Tidak ada yang bisa diubah lagi. Lanjutkan?')
-                    ->action(function (Pembelian $record) {
-                        $record->lockFinal();
-                        \Filament\Notifications\Notification::make()
-                            ->title('Pembelian terkunci')
-                            ->success()
                             ->send();
                     }),
 

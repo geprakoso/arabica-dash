@@ -225,7 +225,7 @@ class Pembelian extends Model
 
     // ============================================================
     // STATE MACHINE
-    // draft → final → locked
+    // draft → final (post)
     // final → draft (void, 1x only)
     // Item TIDAK bisa diedit, hanya pembayaran yang bisa diedit
     // ============================================================
@@ -240,14 +240,14 @@ class Pembelian extends Model
         return $this->status_dokumen === 'final';
     }
 
-    public function isLocked(): bool
-    {
-        return $this->status_dokumen === 'locked';
-    }
-
     public function isVoided(): bool
     {
         return $this->status_dokumen === 'voided';
+    }
+
+    public function isFromTukarTambah(): bool
+    {
+        return $this->tukarTambah()->exists();
     }
 
     public function canEditItems(): bool
@@ -257,23 +257,31 @@ class Pembelian extends Model
 
     public function canEditPayment(): bool
     {
+        if ($this->isFromTukarTambah()) {
+            return false;
+        }
+
         return $this->isDraft() && ! $this->is_locked;
     }
 
     public function canPost(): bool
     {
+        if ($this->isFromTukarTambah()) {
+            return false;
+        }
+
         return $this->isDraft() && ! $this->is_locked;
     }
 
     public function canVoid(): bool
     {
-        return ($this->isFinal() || $this->isLocked())
-            && ! $this->void_used;
-    }
+        if ($this->isFromTukarTambah()) {
+            return false;
+        }
 
-    public function canLock(): bool
-    {
-        return $this->isFinal() && ! $this->is_locked;
+        return $this->isFinal()
+            && ! $this->is_locked
+            && ! $this->void_used;
     }
 
     public function canEdit(): bool
@@ -310,18 +318,6 @@ class Pembelian extends Model
             'void_used' => true,
             'voided_at' => now(),
             'voided_by_id' => auth()->id(),
-        ]);
-    }
-
-    public function lockFinal(): void
-    {
-        if (! $this->canLock()) {
-            throw new \RuntimeException('Pembelian tidak bisa di-lock.');
-        }
-
-        $this->update([
-            'status_dokumen' => 'locked',
-            'is_locked' => true,
         ]);
     }
 

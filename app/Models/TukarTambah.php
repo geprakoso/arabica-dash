@@ -238,7 +238,10 @@ class TukarTambah extends Model
             ]);
 
             $this->penjualan?->update(['status_dokumen' => 'final']);
-            $this->pembelian?->update(['status_dokumen' => 'final']);
+            $this->pembelian?->update([
+                'status_dokumen' => 'final',
+                'is_locked' => true,
+            ]);
         });
     }
 
@@ -264,6 +267,7 @@ class TukarTambah extends Model
 
         $this->pembelian?->update([
             'status_dokumen' => 'draft',
+            'is_locked' => false,
             'void_used' => true,
             'voided_at' => now(),
             'voided_by_id' => auth()->id(),
@@ -286,7 +290,7 @@ class TukarTambah extends Model
                 'is_locked' => true,
             ]);
             $this->pembelian?->update([
-                'status_dokumen' => 'locked',
+                'status_dokumen' => 'final',
                 'is_locked' => true,
             ]);
         });
