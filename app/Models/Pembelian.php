@@ -267,8 +267,7 @@ class Pembelian extends Model
 
     public function canVoid(): bool
     {
-        return $this->isFinal()
-            && ! $this->is_locked
+        return ($this->isFinal() || $this->isLocked())
             && ! $this->void_used;
     }
 
@@ -307,6 +306,7 @@ class Pembelian extends Model
 
         $this->update([
             'status_dokumen' => 'draft',
+            'is_locked' => false,
             'void_used' => true,
             'voided_at' => now(),
             'voided_by_id' => auth()->id(),
