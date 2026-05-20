@@ -60,15 +60,21 @@ class InputTransaksiToko extends Model implements HasMedia
         $items = $this->getMedia('bukti_transaksi')
             ->map(fn ($media) => [
                 'url' => $media->getUrl(),
-                'name' => $media->name ?? 'Bukti Transaksi',
+                'name' => $media->name ?? $media->file_name ?? 'Bukti Transaksi',
+                'mime_type' => $media->mime_type,
+                'file_name' => $media->file_name,
             ])
             ->values()
             ->all();
 
         if (empty($items) && filled($this->bukti_transaksi)) {
+            $disk = Storage::disk('public');
+
             $items[] = [
-                'url' => Storage::disk('public')->url($this->bukti_transaksi),
-                'name' => 'Bukti Transaksi',
+                'url' => $disk->url($this->bukti_transaksi),
+                'name' => basename($this->bukti_transaksi),
+                'mime_type' => $disk->exists($this->bukti_transaksi) ? $disk->mimeType($this->bukti_transaksi) : null,
+                'file_name' => basename($this->bukti_transaksi),
             ];
         }
 
