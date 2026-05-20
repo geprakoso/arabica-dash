@@ -8,7 +8,11 @@
             $url = $item['url'] ?? '';
             $path = parse_url($url, PHP_URL_PATH) ?? '';
             $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+            $mimeType = strtolower((string) ($item['mime_type'] ?? ''));
             $isPdf = $ext === 'pdf';
+            $isPreviewableImage = in_array($mimeType, ['image/jpeg', 'image/png', 'image/webp', 'image/gif'], true)
+                || in_array($ext, ['jpg', 'jpeg', 'png', 'webp', 'gif'], true);
+            $fileLabel = $isPdf ? 'PDF' : strtoupper($ext ?: 'FILE');
         @endphp
         <a
             href="{{ $url ?: '#' }}"
@@ -18,13 +22,15 @@
         >
             <div class="flex h-32 w-full items-center justify-center bg-gray-50">
                 @if ($isPdf)
-                    <div class="text-xs font-semibold text-gray-500">PDF</div>
-                @else
+                    <div class="text-xs font-semibold text-gray-500">{{ $fileLabel }}</div>
+                @elseif ($isPreviewableImage)
                     <img
                         src="{{ $url }}"
                         alt="{{ $item['name'] ?? 'Bukti Transaksi' }}"
                         class="h-28 w-full object-contain"
                     />
+                @else
+                    <div class="px-3 text-center text-xs font-semibold text-gray-500">{{ $fileLabel }}</div>
                 @endif
             </div>
             <div class="px-3 py-2 text-xs font-medium text-gray-700 line-clamp-2">
