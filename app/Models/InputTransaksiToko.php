@@ -9,13 +9,9 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\Storage;
-use Spatie\MediaLibrary\HasMedia;
-use Spatie\MediaLibrary\InteractsWithMedia;
 
-class InputTransaksiToko extends Model implements HasMedia
+class InputTransaksiToko extends Model
 {
-    use InteractsWithMedia;
-
     protected $table = 'ak_input_transaksi_tokos';
 
     protected $fillable = [
@@ -33,6 +29,7 @@ class InputTransaksiToko extends Model implements HasMedia
         'tanggal_transaksi' => 'date',
         'kategori_transaksi' => KategoriAkun::class,
         'nominal_transaksi' => 'decimal:2',
+        'bukti_transaksi' => 'array',
     ];
 
     public function jenisAkun(): BelongsTo
@@ -50,34 +47,25 @@ class InputTransaksiToko extends Model implements HasMedia
         return $this->belongsTo(AkunTransaksi::class);
     }
 
-    /**
-     * Gallery bukti transaksi (media library + fallback legacy path).
-     *
-     * @return array<int, array{url: string, name: string}>
-     */
     public function buktiTransaksiGallery(): array
     {
-        $items = $this->getMedia('bukti_transaksi')
-            ->map(fn ($media) => [
-                'url' => $media->getUrl(),
-                'name' => $media->name ?? $media->file_name ?? 'Bukti Transaksi',
-                'mime_type' => $media->mime_type,
-                'file_name' => $media->file_name,
+        $paths = $this->bukti_transaksi ?? [];
+
+        if (empty($paths)) {
+            return [];
+        }
+
+        $disk = Storage::disk('public');
+
+        return collect($paths)
+            ->filter(fn ($path) => filled($path))
+            ->map(fn ($path) => [
+                'url' => $disk->url($path),
+                'name' => pathinfo($path, PATHINFO_FILENAME),
+                'mime_type' => $disk->exists($path) ? $disk->mimeType($path) : null,
+                'file_name' => basename($path),
             ])
             ->values()
             ->all();
-
-        if (empty($items) && filled($this->bukti_transaksi)) {
-            $disk = Storage::disk('public');
-
-            $items[] = [
-                'url' => $disk->url($this->bukti_transaksi),
-                'name' => basename($this->bukti_transaksi),
-                'mime_type' => $disk->exists($this->bukti_transaksi) ? $disk->mimeType($this->bukti_transaksi) : null,
-                'file_name' => basename($this->bukti_transaksi),
-            ];
-        }
-
-        return $items;
     }
 }

@@ -3,13 +3,14 @@
 namespace App\Filament\Resources\Akunting;
 
 use App\Enums\KategoriAkun;
-use App\Filament\Forms\Components\MediaManagerPicker;
 use App\Filament\Resources\Akunting\InputTransaksiTokoResource\Pages;
 use App\Filament\Resources\BaseResource;
 use App\Models\InputTransaksiToko;
 use App\Models\JenisAkun;
+use App\Support\WebpUpload;
 use Filament\Facades\Filament;
-use Filament\Forms\Components\DatePicker; // Sesuaikan namespace Enum
+use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\Grid as FormsGrid;
 use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Section;
@@ -19,6 +20,7 @@ use Filament\Forms\Components\TextInput;
 use Filament\Forms\Form;
 use Filament\Forms\Get;
 use Filament\Forms\Set;
+use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
 use Filament\Infolists\Components\Grid;
 use Filament\Infolists\Components\Group;
 use Filament\Infolists\Components\Section as InfolistSection;
@@ -73,14 +75,17 @@ class InputTransaksiTokoResource extends BaseResource
     public static function form(Form $form): Form
     {
         return $form
+            ->columns(3)
             ->schema([
-                Section::make('Informasi Transaksi')
-                    ->description('Input detail pemasukan atau pengeluaran kas.')
-                    ->icon('heroicon-m-banknotes')
-                    ->schema([
 
-                        // --- BARIS 1: Waktu & Klasifikasi ---
-                        FormsGrid::make(2)
+                // === KOLOM KIRI: Data Utama Transaksi ===
+                FormsGrid::make(1)
+                    ->columnSpan(['lg' => 2])
+                    ->schema([
+                        Section::make('Informasi Transaksi')
+                            ->description('Input detail pemasukan atau pengeluaran kas.')
+                            ->icon('heroicon-m-banknotes')
+                            ->columns(2)
                             ->schema([
                                 DatePicker::make('tanggal_transaksi')
                                     ->label('Tanggal')
@@ -89,47 +94,7 @@ class InputTransaksiTokoResource extends BaseResource
                                     ->displayFormat('d F Y')
                                     ->default(now())
                                     ->prefixIcon('hugeicons-calendar-01'),
-                                Select::make('kode_jenis_akun_id')
-                                    ->label('Jenis Akun')
-                                    ->required()
-                                    ->relationship(
-                                        name: 'jenisAkun',
-                                        titleAttribute: 'nama_jenis_akun',
-                                        modifyQueryUsing: fn (Builder $query, Get $get) => $get('kategori_transaksi')
-                                            ? $query->whereHas('kodeAkun', fn (Builder $q) => $q->where('kategori_akun', $get('kategori_transaksi')))
-                                            : $query,
-                                    )
-                                    ->searchable(['nama_jenis_akun', 'kode_jenis_akun'])
-                                    ->preload()
-                                    // ->clearable()
-                                    ->native(false)
-                                    ->prefixIcon('hugeicons-credit-card')
-                                    ->placeholder('Pilih jenis akun')
-                                    ->getOptionLabelFromRecordUsing(
-                                        fn (JenisAkun $record): HtmlString => self::formatJenisAkunLabelWithBadge($record)
-                                    )
-                                    ->allowHtml()
-                                    ->reactive()
-                                    ->afterStateUpdated(function (Set $set, ?string $state) {
-                                        if (blank($state)) {
-                                            $set('kategori_transaksi', null);
 
-                                            return;
-                                        }
-
-                                        $kategori = JenisAkun::query()
-                                            ->with('kodeAkun')
-                                            ->find($state)
-                                            ?->kodeAkun
-                                            ?->kategori_akun;
-
-                                        $set('kategori_transaksi', $kategori);
-                                    }),
-                            ]),
-
-                        // --- BARIS 2: Detail Akun ---
-                        FormsGrid::make(2)
-                            ->schema([
                                 Select::make('kategori_transaksi')
                                     ->label('Kategori')
                                     ->required()
@@ -158,6 +123,43 @@ class InputTransaksiTokoResource extends BaseResource
                                     })
                                     ->dehydrated(),
 
+                                Select::make('kode_jenis_akun_id')
+                                    ->label('Jenis Akun')
+                                    ->required()
+                                    ->relationship(
+                                        name: 'jenisAkun',
+                                        titleAttribute: 'nama_jenis_akun',
+                                        modifyQueryUsing: fn(Builder $query, Get $get) => $get('kategori_transaksi')
+                                            ? $query->whereHas('kodeAkun', fn(Builder $q) => $q->where('kategori_akun', $get('kategori_transaksi')))
+                                            : $query,
+                                    )
+                                    ->searchable(['nama_jenis_akun', 'kode_jenis_akun'])
+                                    ->preload()
+                                    // ->clearable()
+                                    ->native(false)
+                                    ->prefixIcon('hugeicons-credit-card')
+                                    ->placeholder('Pilih jenis akun')
+                                    ->getOptionLabelFromRecordUsing(
+                                        fn(JenisAkun $record): HtmlString => self::formatJenisAkunLabelWithBadge($record)
+                                    )
+                                    ->allowHtml()
+                                    ->reactive()
+                                    ->afterStateUpdated(function (Set $set, ?string $state) {
+                                        if (blank($state)) {
+                                            $set('kategori_transaksi', null);
+
+                                            return;
+                                        }
+
+                                        $kategori = JenisAkun::query()
+                                            ->with('kodeAkun')
+                                            ->find($state)
+                                            ?->kodeAkun
+                                            ?->kategori_akun;
+
+                                        $set('kategori_transaksi', $kategori);
+                                    }),
+
                                 Select::make('akun_transaksi_id')
                                     ->label('Akun Transaksi (Opsional)')
                                     ->relationship('akunTransaksi', 'nama_akun')
@@ -166,38 +168,61 @@ class InputTransaksiTokoResource extends BaseResource
                                     ->native(false)
                                     ->prefixIcon('hugeicons-credit-card')
                                     ->placeholder('Pilih akun transaksi'),
+
+                                TextInput::make('nominal_transaksi')
+                                    ->label('Nominal (Rp)')
+                                    ->required()
+                                    ->numeric()
+                                    ->prefix('Rp')
+                                    ->placeholder('0')
+                                    ->currencyMask(thousandSeparator: '.', decimalSeparator: ',', precision: 0)
+                                    // ->stripCharacters([',', '.', 'Rp', ' '])
+                                    ->columnSpanFull(),
                             ]),
 
-                        // --- BARIS 3: Nominal & Keterangan ---
-                        TextInput::make('nominal_transaksi')
-                            ->label('Nominal (Rp)')
-                            ->required()
-                            ->numeric()
-                            ->prefix('Rp')
-                            ->placeholder('0')
-                            ->currencyMask(thousandSeparator: '.', decimalSeparator: ',', precision: 0)
-                            // ->stripCharacters([',', '.', 'Rp', ' '])
-                            ->columnSpanFull(), // Nominal dibuat lebar agar fokus
+                        Section::make('Catatan')
+                            ->icon('heroicon-m-chat-bubble-left-ellipsis')
+                            ->schema([
+                                Textarea::make('keterangan_transaksi')
+                                    ->label('Keterangan / Catatan')
+                                    ->placeholder('Contoh: Pembayaran listrik bulan November...')
+                                    ->rows(3)
+                                    ->hiddenLabel(),
+                            ])
+                            ->collapsible(),
+                    ]),
 
-                        Textarea::make('keterangan_transaksi')
-                            ->label('Keterangan / Catatan')
-                            ->placeholder('Contoh: Pembayaran listrik bulan November...')
-                            ->rows(3)
-                            ->columnSpanFull(),
-
-                        // --- BARIS 4: Bukti ---
-                        MediaManagerPicker::make('bukti_transaksi')
-                            ->label('Upload Bukti (Gallery)')
-                            ->disk('public')
-                            ->maxItems(10)
-                            ->reorderable()
-                            ->columnSpanFull(),
+                // === KOLOM KANAN: Bukti & Upload ===
+                FormsGrid::make(1)
+                    ->columnSpan(['lg' => 1])
+                    ->schema([
+                        Section::make('Bukti Transaksi')
+                            ->icon('heroicon-m-paper-clip')
+                            ->schema([
+                                FileUpload::make('bukti_transaksi')
+                                    ->label('Upload Bukti')
+                                    ->hiddenLabel()
+                                    ->image()
+                                    ->multiple()
+                                    ->maxFiles(10)
+                                    ->reorderable()
+                                    ->disk('public')
+                                    ->directory('input-transaksi/bukti')
+                                    ->imageResizeMode('contain')
+                                    ->imageResizeTargetWidth('1920')
+                                    ->imageResizeTargetHeight('1080')
+                                    ->acceptedFileTypes(['image/jpeg', 'image/png', 'image/webp'])
+                                    ->saveUploadedFileUsing(fn(FileUpload $component, TemporaryUploadedFile $file): ?string => WebpUpload::store($component, $file, 80))
+                                    ->openable()
+                                    ->downloadable()
+                                    ->panelLayout('grid')
+                                    ->panelAspectRatio('1:1'),
+                            ]),
 
                         // --- Hidden Fields ---
                         Hidden::make('user_id')
-                            ->default(fn () => auth()->id()),
-                    ])
-                    ->columns(2),
+                            ->default(fn() => auth()->id()),
+                    ]),
             ]);
     }
 
@@ -233,7 +258,7 @@ class InputTransaksiTokoResource extends BaseResource
                                     ->label('Nominal')
                                     // ->money('idr', false)
                                     ->weight(FontWeight::Bold)
-                                    ->formatStateUsing(fn ($state) => money($state, 'IDR')->formatWithoutZeroes())
+                                    ->formatStateUsing(fn($state) => money($state, 'IDR')->formatWithoutZeroes())
                                     ->size(TextEntry\TextEntrySize::Large)
                                     // Warnai berdasarkan enum yang tersimpan; fallback ke abu-abu bila tidak dikenali.
                                     ->color(function ($state, $record) {
@@ -256,7 +281,7 @@ class InputTransaksiTokoResource extends BaseResource
                                             ->icon('heroicon-m-credit-card')
                                             ->weight(FontWeight::Medium)
                                             ->formatStateUsing(
-                                                fn ($state, InputTransaksiToko $record): string => self::formatJenisAkunLabel($record->jenisAkun)
+                                                fn($state, InputTransaksiToko $record): string => self::formatJenisAkunLabel($record->jenisAkun)
                                             ),
 
                                         TextEntry::make('akunTransaksi.nama_akun')
@@ -287,8 +312,8 @@ class InputTransaksiTokoResource extends BaseResource
                                 ViewEntry::make('bukti_transaksi_gallery')
                                     ->label('')
                                     ->hiddenLabel()
-                                    ->view('filament.infolists.components.media-manager-gallery')
-                                    ->state(fn (InputTransaksiToko $record) => $record->buktiTransaksiGallery()),
+                                    ->view('filament.infolists.components.input-transaksi-gallery')
+                                    ->state(fn(InputTransaksiToko $record) => $record->buktiTransaksiGallery()),
                             ]),
 
                         // Section 4: Metadata
@@ -321,17 +346,17 @@ class InputTransaksiTokoResource extends BaseResource
                     ->searchable()
                     ->sortable()
                     ->formatStateUsing(
-                        fn ($state, InputTransaksiToko $record): string => self::formatJenisAkunLabel($record->jenisAkun)
+                        fn($state, InputTransaksiToko $record): string => self::formatJenisAkunLabel($record->jenisAkun)
                     ),
                 Tables\Columns\TextColumn::make('kategori_transaksi')
                     ->label('Kategori')
                     ->badge()
-                    ->formatStateUsing(fn (?KategoriAkun $state) => $state?->getLabel() ?? '-')
-                    ->color(fn (?KategoriAkun $state) => $state?->getColor()),
+                    ->formatStateUsing(fn(?KategoriAkun $state) => $state?->getLabel() ?? '-')
+                    ->color(fn(?KategoriAkun $state) => $state?->getColor()),
                 Tables\Columns\TextColumn::make('nominal_transaksi')
                     ->label('Nominal')
                     // ->money('idr', false)
-                    ->formatStateUsing(fn ($state) => money($state, 'IDR')->formatWithoutZeroes())
+                    ->formatStateUsing(fn($state) => money($state, 'IDR')->formatWithoutZeroes())
                     ->sortable(),
                 Tables\Columns\TextColumn::make('user.name')
                     ->label('Penginput')
@@ -365,13 +390,13 @@ class InputTransaksiTokoResource extends BaseResource
                                 ->native(false)
                                 ->placeholder('Pilih tanggal')
                                 ->prefixIcon('hugeicons-calendar-01')
-                                ->hidden(fn (Get $get) => $get('range') !== 'custom'),
+                                ->hidden(fn(Get $get) => $get('range') !== 'custom'),
                             DatePicker::make('until')
                                 ->label('Sampai')
                                 ->native(false)
                                 ->placeholder('Pilih tanggal')
                                 ->prefixIcon('hugeicons-calendar-01')
-                                ->hidden(fn (Get $get) => $get('range') !== 'custom'),
+                                ->hidden(fn(Get $get) => $get('range') !== 'custom'),
                         ]),
                     ])
                     ->query(function (Builder $query, array $data): Builder {
@@ -401,23 +426,23 @@ class InputTransaksiTokoResource extends BaseResource
                         return $query
                             ->when(
                                 $startDate,
-                                fn (Builder $query, $date): Builder => $query->whereDate('tanggal_transaksi', '>=', $date),
+                                fn(Builder $query, $date): Builder => $query->whereDate('tanggal_transaksi', '>=', $date),
                             )
                             ->when(
                                 $endDate,
-                                fn (Builder $query, $date): Builder => $query->whereDate('tanggal_transaksi', '<=', $date),
+                                fn(Builder $query, $date): Builder => $query->whereDate('tanggal_transaksi', '<=', $date),
                             );
                     }),
             ])
             ->actions([
                 Tables\Actions\ViewAction::make()
-                    ->url(fn (InputTransaksiToko $record) => static::getUrl(
+                    ->url(fn(InputTransaksiToko $record) => static::getUrl(
                         'view',
                         ['record' => $record],
                         panel: Filament::getCurrentPanel()?->getId(),
                     )),
                 Tables\Actions\EditAction::make()
-                    ->url(fn (InputTransaksiToko $record) => static::getUrl(
+                    ->url(fn(InputTransaksiToko $record) => static::getUrl(
                         'edit',
                         ['record' => $record],
                         panel: Filament::getCurrentPanel()?->getId(),
@@ -489,15 +514,15 @@ class InputTransaksiTokoResource extends BaseResource
             $badge = sprintf(
                 '<span class="%s shrink-0" %s>%s</span>',
                 e($badgeClasses),
-                $badgeStyle ? 'style="'.e($badgeStyle).'"' : '',
+                $badgeStyle ? 'style="' . e($badgeStyle) . '"' : '',
                 e($kategoriLabel)
             );
 
             return new HtmlString(
-                '<span class="flex items-center justify-between gap-2">'.
-                    '<span class="min-w-0 truncate">'.e($label).'</span>'.
-                    $badge.
-                '</span>'
+                '<span class="flex items-center justify-between gap-2">' .
+                    '<span class="min-w-0 truncate">' . e($label) . '</span>' .
+                    $badge .
+                    '</span>'
             );
         }
 
