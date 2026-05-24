@@ -315,7 +315,7 @@ class LaporanInputTransaksiResource extends BaseResource
                                 ViewEntry::make('bukti_transaksi_gallery')
                                     ->label('')
                                     ->hiddenLabel()
-                                    ->view('filament.infolists.components.media-manager-gallery')
+                                    ->view('filament.infolists.components.input-transaksi-gallery')
                                     ->state(fn (InputTransaksiToko $record) => $record->buktiTransaksiGallery()),
                             ]),
                     ]),
