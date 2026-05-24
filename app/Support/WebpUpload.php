@@ -31,6 +31,18 @@ class WebpUpload
             $disk = $component->getDisk();
             if ($directory !== '') {
                 $disk->makeDirectory($directory);
+                
+                // Set explicitly visibility to public for directory and its parents to fix Nginx 404 permissions
+                $parts = explode('/', trim($directory, '/'));
+                $current = '';
+                foreach ($parts as $part) {
+                    $current .= ($current === '' ? '' : '/') . $part;
+                    if ($disk->exists($current)) {
+                        try {
+                            $disk->setVisibility($current, 'public');
+                        } catch (Throwable $e) {}
+                    }
+                }
             }
 
             $diskPath = $disk->path($path);
