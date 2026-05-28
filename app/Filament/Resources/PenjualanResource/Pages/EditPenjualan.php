@@ -19,8 +19,6 @@ class EditPenjualan extends EditRecord
 
     protected array $itemsToCreate = [];
 
-    protected string $saveMode = 'final';
-
     protected function mutateFormDataBeforeFill(array $data): array
     {
         // Transform existing items to items_temp format for the form
