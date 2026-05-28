@@ -3,8 +3,6 @@
 namespace App\Filament\Resources;
 
 use App\Filament\Resources\PenjualanResource\Pages;
-use App\Filament\Resources\PenjualanResource\RelationManagers\ItemsRelationManager;
-use App\Filament\Resources\PenjualanResource\RelationManagers\JasaRelationManager;
 use App\Models\Member;
 use App\Models\PembelianItem;
 use App\Models\Penjualan;
@@ -1628,10 +1626,7 @@ class PenjualanResource extends BaseResource
 
     public static function getRelations(): array
     {
-        return [
-            ItemsRelationManager::class,
-            JasaRelationManager::class,
-        ];
+        return [];
     }
 
     public static function getPages(): array

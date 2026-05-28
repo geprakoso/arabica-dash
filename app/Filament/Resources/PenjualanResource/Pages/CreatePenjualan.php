@@ -3,7 +3,6 @@
 namespace App\Filament\Resources\PenjualanResource\Pages;
 
 use App\Filament\Resources\PenjualanResource;
-use App\Models\PembelianItem;
 use App\Models\PenjualanItem;
 use App\Services\ValidationLogger;
 use Filament\Actions\Action;
@@ -119,126 +118,22 @@ class CreatePenjualan extends CreateRecord
                 $productKeys[$key] = $index + 1;
             }
         }
-
-        // Aggregate total qty per produk
-        $totalQtyMap = [];
-        foreach ($items as $index => $item) {
-            $productId = (int) ($item['id_produk'] ?? 0);
-            $qty = (int) ($item['qty'] ?? 0);
-            $condition = $item['kondisi'] ?? null;
-            $batchId = (int) ($item['id_pembelian_item'] ?? 0);
-
-            if ($productId < 1) {
-                ValidationLogger::logRequired(
-                    sourceType: 'Penjualan',
-                    sourceAction: 'create',
-                    fieldName: 'id_produk',
-                    fieldLabel: 'Produk',
-                    inputData: ['row' => $index + 1]
-                );
-
-                throw ValidationException::withMessages([
-                    'items_temp' => 'Produk pada baris '.($index + 1).' harus dipilih.',
-                ]);
-            }
-
-            if ($qty < 1) {
-                $productName = \App\Models\Produk::find($productId)?->nama_produk ?? 'Produk #'.$productId;
-                ValidationLogger::logFormat(
-                    sourceType: 'Penjualan',
-                    sourceAction: 'create',
-                    fieldName: 'qty',
-                    message: "Qty untuk {$productName} minimal 1",
-                    inputData: [
-                        'product_id' => $productId,
-                        'product_name' => $productName,
-                        'qty' => $qty,
-                        'row' => $index + 1,
-                    ]
-                );
-
-                throw ValidationException::withMessages([
-                    'items_temp' => "Qty untuk {$productName} minimal 1.",
-                ]);
-            }
-
-            $key = $productId.'|'.($condition ?? '').'|'.$batchId;
-
-            if (! isset($totalQtyMap[$key])) {
-                $totalQtyMap[$key] = [
-                    'product_id' => $productId,
-                    'condition' => $condition,
-                    'batch_id' => $batchId,
-                    'qty' => 0,
-                    'rows' => [],
-                ];
-            }
-            $totalQtyMap[$key]['qty'] += $qty;
-            $totalQtyMap[$key]['rows'][] = $index + 1;
-        }
-
-        // Validasi stok database (gunakan StockBatch)
-        foreach ($totalQtyMap as $group) {
-            $productId = $group['product_id'];
-            $condition = $group['condition'];
-            $batchId = $group['batch_id'];
-            $requestedQty = $group['qty'];
-            $rows = $group['rows'];
-
-            $query = \App\Models\StockBatch::query()
-                ->whereHas('pembelianItem', function ($q) use ($productId, $condition) {
-                    $q->where('id_produk', $productId);
-                    if ($condition) {
-                        $q->where('kondisi', $condition);
-                    }
-                })
-                ->where('qty_available', '>', 0);
-
-            if ($batchId > 0) {
-                $query->where('pembelian_item_id', $batchId);
-            }
-
-            $availableQty = (int) $query->sum('qty_available');
-
-            if ($availableQty < $requestedQty) {
-                $productName = \App\Models\Produk::find($productId)?->nama_produk ?? 'Produk #'.$productId;
-                $rowInfo = count($rows) > 1 ? ' (baris: '.implode(', ', $rows).')' : '';
-                $errorMessage = "Stok tidak cukup untuk {$productName}{$rowInfo}. Tersedia: {$availableQty}, Dibutuhkan: {$requestedQty}";
-
-                ValidationLogger::logStock(
-                    sourceType: 'Penjualan',
-                    sourceAction: 'create',
-                    productName: $productName,
-                    available: $availableQty,
-                    requested: $requestedQty,
-                    inputData: [
-                        'product_id' => $productId,
-                        'batch_id' => $batchId,
-                        'condition' => $condition,
-                        'rows' => $rows,
-                    ]
-                );
-
-                Notification::make()
-                    ->title('Validasi Gagal - Stok Tidak Cukup')
-                    ->body($errorMessage)
-                    ->icon('heroicon-o-exclamation-triangle')
-                    ->danger()
-                    ->persistent()
-                    ->send();
-
-                throw ValidationException::withMessages([
-                    'items_temp' => $errorMessage,
-                ]);
-            }
-        }
     }
 
     protected function afterCreate(): void
     {
-        // Process items with FIFO allocation
         if (! empty($this->itemsToCreate)) {
-            $this->createItemsWithFifo($this->itemsToCreate);
+            foreach ($this->itemsToCreate as $itemData) {
+                PenjualanItem::create([
+                    'id_penjualan' => $this->record->getKey(),
+                    'id_produk' => $itemData['id_produk'],
+                    'id_pembelian_item' => $itemData['id_pembelian_item'] ?? null,
+                    'qty' => $itemData['qty'],
+                    'harga_jual' => $itemData['harga_jual'] ?? null,
+                    'kondisi' => $itemData['kondisi'] ?? null,
+                    'serials' => $itemData['serials'] ?? null,
+                ]);
+            }
         }
 
         // Recalculate totals
@@ -262,166 +157,6 @@ class CreatePenjualan extends CreateRecord
                         ->url(PenjualanResource::getUrl('view', ['record' => $this->record])),
                 ])
                 ->sendToDatabase($user);
-        }
-    }
-
-    protected function validateTotalQtyAvailability(array $items): void
-    {
-        $totalQtyMap = [];
-        foreach ($items as $item) {
-            $productId = (int) ($item['id_produk'] ?? 0);
-            $qty = (int) ($item['qty'] ?? 0);
-            $condition = $item['kondisi'] ?? null;
-            $batchId = (int) ($item['id_pembelian_item'] ?? 0);
-
-            if ($productId < 1 || $qty < 1) {
-                continue;
-            }
-
-            $key = $productId.'|'.($condition ?? '').'|'.$batchId;
-
-            if (! isset($totalQtyMap[$key])) {
-                $totalQtyMap[$key] = [
-                    'product_id' => $productId,
-                    'condition' => $condition,
-                    'batch_id' => $batchId,
-                    'qty' => 0,
-                ];
-            }
-            $totalQtyMap[$key]['qty'] += $qty;
-        }
-
-        foreach ($totalQtyMap as $group) {
-            $productId = $group['product_id'];
-            $condition = $group['condition'];
-            $batchId = $group['batch_id'];
-            $requestedQty = $group['qty'];
-
-            $query = \App\Models\StockBatch::query()
-                ->whereHas('pembelianItem', function ($q) use ($productId, $condition) {
-                    $q->where('id_produk', $productId);
-                    if ($condition) {
-                        $q->where('kondisi', $condition);
-                    }
-                })
-                ->where('qty_available', '>', 0);
-
-            if ($batchId > 0) {
-                $query->where('pembelian_item_id', $batchId);
-            }
-
-            $availableQty = (int) $query->sum('qty_available');
-
-            if ($availableQty < $requestedQty) {
-                $productName = \App\Models\Produk::find($productId)?->nama_produk ?? 'Produk #'.$productId;
-                throw ValidationException::withMessages([
-                    'items_temp' => "Stok tidak cukup untuk {$productName}. Tersedia: {$availableQty}, Dibutuhkan: {$requestedQty}",
-                ]);
-            }
-        }
-    }
-
-    protected function createItemsWithFifo(array $items): void
-    {
-        $this->validateTotalQtyAvailability($items);
-
-        foreach ($items as $item) {
-            $productId = (int) ($item['id_produk'] ?? 0);
-            $qty = (int) ($item['qty'] ?? 0);
-            $customPrice = $item['harga_jual'] ?? null;
-            $condition = $item['kondisi'] ?? null;
-            $batchId = (int) ($item['id_pembelian_item'] ?? 0);
-            $serials = is_array($item['serials'] ?? null) ? array_values($item['serials']) : [];
-
-            if ($productId < 1 || $qty < 1) {
-                continue;
-            }
-
-            if ($batchId > 0) {
-                $stockBatch = \App\Models\StockBatch::where('pembelian_item_id', $batchId)
-                    ->whereHas('pembelianItem', function ($q) use ($productId) {
-                        $q->where('id_produk', $productId);
-                    })
-                    ->first();
-
-                if (! $stockBatch) {
-                    throw ValidationException::withMessages([
-                        'items_temp' => 'StockBatch tidak ditemukan.',
-                    ]);
-                }
-
-                if ($stockBatch->qty_available < $qty) {
-                    throw ValidationException::withMessages([
-                        'items_temp' => "Stok batch tidak cukup. Tersedia: {$stockBatch->qty_available}, Dibutuhkan: {$qty}",
-                    ]);
-                }
-
-                $takeSerials = ! empty($serials) ? array_splice($serials, 0, $qty) : [];
-
-                PenjualanItem::create([
-                    'id_penjualan' => $this->record->getKey(),
-                    'id_produk' => $productId,
-                    'id_pembelian_item' => $stockBatch->pembelian_item_id,
-                    'qty' => $qty,
-                    'harga_jual' => $customPrice,
-                    'kondisi' => $stockBatch->pembelianItem->kondisi,
-                    'serials' => empty($takeSerials) ? null : $takeSerials,
-                ]);
-
-                continue;
-            }
-
-            $batchesQuery = \App\Models\StockBatch::query()
-                ->whereHas('pembelianItem', function ($q) use ($productId, $condition) {
-                    $q->where('id_produk', $productId);
-                    if ($condition) {
-                        $q->where('kondisi', $condition);
-                    }
-                })
-                ->where('qty_available', '>', 0)
-                ->orderBy('id');
-
-            $batches = $batchesQuery->get();
-            $available = (int) $batches->sum('qty_available');
-
-            if ($available < $qty) {
-                throw ValidationException::withMessages([
-                    'items_temp' => "Stok tidak cukup untuk produk ini. Tersedia: {$available}, Dibutuhkan: {$qty}",
-                ]);
-            }
-
-            $remaining = $qty;
-
-            foreach ($batches as $stockBatch) {
-                if ($remaining <= 0) {
-                    break;
-                }
-
-                $batchAvailable = $stockBatch->qty_available;
-
-                if ($batchAvailable <= 0) {
-                    continue;
-                }
-
-                $takeQty = min($remaining, $batchAvailable);
-
-                $takeSerials = [];
-                if (! empty($serials)) {
-                    $takeSerials = array_splice($serials, 0, $takeQty);
-                }
-
-                PenjualanItem::create([
-                    'id_penjualan' => $this->record->getKey(),
-                    'id_produk' => $productId,
-                    'id_pembelian_item' => $stockBatch->pembelian_item_id,
-                    'qty' => $takeQty,
-                    'harga_jual' => $customPrice,
-                    'kondisi' => $condition ?? $stockBatch->pembelianItem->kondisi,
-                    'serials' => empty($takeSerials) ? null : $takeSerials,
-                ]);
-
-                $remaining -= $takeQty;
-            }
         }
     }
 
