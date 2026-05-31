@@ -1385,7 +1385,7 @@ class TukarTambahResource extends BaseResource
                             $livewire->redirect(TukarTambahResource::getUrl('edit', ['record' => $record]));
                         }),
                     Tables\Actions\DeleteAction::make()
-                        ->visible(fn() => auth()->user()?->hasRole('godmode'))
+                        ->visible(fn() => auth()->user()?->hasRole(['godmode', 'super_admin']))
                         ->requiresConfirmation()
                         ->modalHeading(
                             fn(TukarTambah $record): string => $record->canDelete() && $record->getExternalPenjualanReferences()->isEmpty()
@@ -1475,7 +1475,7 @@ class TukarTambahResource extends BaseResource
                         ->label('Hapus')
                         ->icon('heroicon-m-trash')
                         ->color('danger')
-                        ->visible(fn() => auth()->user()?->hasRole('godmode'))
+                        ->visible(fn() => auth()->user()?->hasRole(['godmode', 'super_admin']))
                         ->requiresConfirmation()
                         ->modalCancelAction(false)
                         ->modalHeading('⚠️ Hapus Tukar Tambah')

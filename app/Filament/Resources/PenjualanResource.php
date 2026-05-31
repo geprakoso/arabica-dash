@@ -1290,7 +1290,7 @@ class PenjualanResource extends BaseResource
 
                 ])->hidden(function (Penjualan $record): bool {
                     // Godmode: Always show actions
-                    if (auth()->user()?->hasRole('godmode')) {
+                    if (auth()->user()?->hasRole(['godmode', 'super_admin'])) {
                         return false;
                     }
 

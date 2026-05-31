@@ -60,7 +60,7 @@ class EditTukarTambah extends EditRecord
                 ->label('Hapus')
                 ->icon('heroicon-m-trash')
                 ->color('danger')
-                ->visible(fn() => auth()->user()?->hasRole('godmode'))
+                ->visible(fn() => auth()->user()?->hasRole(['godmode', 'super_admin']))
                 ->requiresConfirmation()
                 ->modalHeading(fn() => $this->record->canDelete() ? 'Konfirmasi Hapus Tukar Tambah' : 'Tidak Bisa Dihapus')
                 ->modalIcon(fn() => $this->record->canDelete() ? 'heroicon-o-trash' : 'heroicon-o-exclamation-triangle')

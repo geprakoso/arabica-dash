@@ -1107,7 +1107,7 @@ class PembelianResource extends BaseResource
                         }),
                     Tables\Actions\DeleteAction::make()
                         ->icon('heroicon-m-trash')
-                        ->visible(fn() => auth()->user()?->hasRole('godmode'))
+                        ->visible(fn() => auth()->user()?->hasRole(['godmode', 'super_admin']))
                         ->modalCancelAction(false)
                         ->requiresConfirmation()
                         ->modalHeading(
@@ -1177,7 +1177,7 @@ class PembelianResource extends BaseResource
                         ->label('Hapus')
                         ->icon('heroicon-m-trash')
                         ->color('danger')
-                        ->visible(fn() => auth()->user()?->hasRole('godmode'))
+                        ->visible(fn() => auth()->user()?->hasRole(['godmode', 'super_admin']))
                         ->requiresConfirmation()
                         ->modalCancelAction(false)
                         ->modalHeading('⚠️ Hapus Pembelian')
