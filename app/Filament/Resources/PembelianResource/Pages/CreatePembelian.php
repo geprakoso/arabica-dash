@@ -120,13 +120,12 @@ class CreatePembelian extends CreateRecord
 
     protected function afterCreate(): void
     {
-        // R16: Jika mode final, lock langsung setelah create
         if ($this->saveMode === 'final') {
             try {
-                $this->record->lockFinal();
+                $this->record->post();
             } catch (\Exception $e) {
                 Notification::make()
-                    ->title('Gagal mengunci pembelian')
+                    ->title('Gagal memposting pembelian')
                     ->body($e->getMessage())
                     ->danger()
                     ->send();

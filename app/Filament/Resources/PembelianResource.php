@@ -802,9 +802,10 @@ class PembelianResource extends BaseResource
             ->columns([
                 TextColumn::make('no_po')
                     ->label('No. PO')
-                    ->icon('heroicon-m-document-text')
+                    ->icon('heroicon-m-receipt-percent')
                     ->weight('bold')
                     ->color('primary')
+                    ->copyable()
                     ->searchable()
                     ->sortable(),
                 TextColumn::make('tanggal')
@@ -818,7 +819,7 @@ class PembelianResource extends BaseResource
                     ->icon('heroicon-m-building-storefront')
                     ->weight('medium')
                     ->formatStateUsing(fn($state) => Str::title($state))
-                    ->limit(9)
+                    ->limit(10)
                     ->tooltip(fn(Pembelian $record): ?string => $record->supplier?->nama_supplier)
                     ->toggleable()
                     ->searchable()
@@ -856,37 +857,50 @@ class PembelianResource extends BaseResource
                         'success' => 'ppn',
                         'gray' => 'non_ppn',
                     ]),
-                // R06: Hanya 2 status pembayaran - TEMPO dan LUNAS (tidak ada DP)
+                TextColumn::make('status_dokumen')
+                    ->label('Status')
+                    ->badge()
+                    ->state(function (Pembelian $record): string {
+                        if ($record->isFinal() && $record->is_locked) {
+                            return 'LOCKED';
+                        }
+                        if ($record->isFinal()) {
+                            return 'FINAL';
+                        }
+                        if ($record->void_used) {
+                            return 'VOIDED';
+                        }
+                        return 'DRAFT';
+                    })
+                    ->color(fn(string $state): string => match ($state) {
+                        'LOCKED' => 'danger',
+                        'FINAL' => 'success',
+                        'VOIDED' => 'warning',
+                        'DRAFT' => 'gray',
+                        default => 'gray',
+                    })
+                    ->alignCenter(),
+
                 TextColumn::make('status_pembayaran')
                     ->label('Tipe')
                     ->badge()
+                    ->copyable()
                     ->state(function (Pembelian $record): string {
                         $grandTotal = (float) $record->calculateTotalPembelian();
                         $totalPaid = (float) ($record->pembayaran_sum_jumlah ?? 0);
 
-                        // R06: LUNAS = pembayaran >= grand total
                         if ($totalPaid >= $grandTotal) {
                             return 'LUNAS';
                         }
 
-                        // R06: TEMPO = pembayaran < grand total (termasuk 0)
                         return 'TEMPO';
                     })
                     ->color(fn(string $state): string => match ($state) {
                         'LUNAS' => 'success',
                         'TEMPO' => 'danger',
                         default => 'gray',
-                    }),
-                TextColumn::make('is_locked')
-                    ->label('Status')
-                    ->badge()
-                    ->state(function (Pembelian $record): string {
-                        return $record->is_locked ? 'Final' : 'Draft';
                     })
-                    ->color(function (Pembelian $record): string {
-                        return $record->is_locked ? 'success' : 'warning';
-                    })
-                    ->toggleable(),
+                    ->alignCenter(),
                 TextColumn::make('items_count')
                     ->label('Jml Item')
                     ->counts('items')
@@ -898,11 +912,11 @@ class PembelianResource extends BaseResource
                     ->sortable(),
                 TextColumn::make('total_pembayaran')
                     ->label('Grand Total')
-                    ->icon('heroicon-m-banknotes')
-                    ->state(fn(Pembelian $record) => $record->calculateTotalPembelian())
-                    ->formatStateUsing(fn(float $state): string => 'Rp ' . number_format((int) $state, 0, ',', '.'))
+                    ->weight('bold')
                     ->color('success')
-                    ->sortable(),
+                    ->alignRight()
+                    ->state(fn(Pembelian $record) => $record->calculateTotalPembelian())
+                    ->formatStateUsing(fn(float $state): string => 'Rp ' . number_format((int) $state, 0, ',', '.')),
                 TextColumn::make('sisa_bayar_display')
                     ->label('Sisa Bayar')
                     ->alignRight()
@@ -1043,30 +1057,39 @@ class PembelianResource extends BaseResource
 
             ])
             ->actions([
-                // R16: Lock Final (Draft -> Final)
-                Action::make('lock')
+                // POST: Draft -> Final
+                Action::make('post')
                     ->label('')
-                    ->icon('heroicon-m-lock-closed')
-                    ->tooltip('Lock Final')
-                    ->color('danger')
-                    ->visible(fn(Pembelian $record) => ! $record->is_locked)
+                    ->icon('heroicon-m-check-circle')
+                    ->color('success')
+                    ->visible(fn(Pembelian $record) => $record->canPost())
                     ->requiresConfirmation()
-                    ->modalHeading('Lock Pembelian')
-                    ->modalDescription('Pembelian akan terkunci permanen. Tidak ada yang bisa diubah lagi. Lanjutkan?')
+                    ->modalHeading('Posting Pembelian')
+                    ->modalDescription('Setelah di-post, pembelian akan final dan tidak bisa diubah kecuali di-void 1x. Lanjutkan?')
                     ->action(function (Pembelian $record) {
-                        try {
-                            $record->lockFinal();
-                            Notification::make()
-                                ->title('Pembelian berhasil di-lock')
-                                ->success()
-                                ->send();
-                        } catch (\Exception $e) {
-                            Notification::make()
-                                ->title('Gagal mengunci')
-                                ->body($e->getMessage())
-                                ->danger()
-                                ->send();
-                        }
+                        $record->post();
+                        \Filament\Notifications\Notification::make()
+                            ->title('Pembelian berhasil di-post')
+                            ->success()
+                            ->send();
+                    }),
+
+                // VOID: Final -> Draft (1x)
+                Action::make('void')
+                    ->label('')
+                    ->tooltip('Void')
+                    ->icon('heroicon-m-arrow-uturn-left')
+                    ->color('warning')
+                    ->visible(fn(Pembelian $record) => $record->canVoid())
+                    ->requiresConfirmation()
+                    ->modalHeading('Void Pembelian ke Draft')
+                    ->modalDescription("Anda hanya bisa melakukan ini 1 kali.\n\nSetelah di-void:\n• Status kembali ke Draft\n• Item tetap terkunci (tidak bisa diedit)\n• Hanya Pembayaran yang bisa diubah\n\nLanjutkan?")
+                    ->action(function (Pembelian $record) {
+                        $record->voidToDraft();
+                        \Filament\Notifications\Notification::make()
+                            ->title('Pembelian di-void ke Draft')
+                            ->warning()
+                            ->send();
                     }),
 
                 Tables\Actions\ActionGroup::make([
@@ -1076,15 +1099,15 @@ class PembelianResource extends BaseResource
                         ->tooltip('Lihat Detail'),
                     Tables\Actions\EditAction::make()
                         ->icon('heroicon-m-pencil-square')
-                        ->tooltip('Edit')
-                        ->visible(fn(Pembelian $record) => ! $record->is_locked)
+                        ->tooltip('Edit Pembayaran')
+                        ->visible(fn(Pembelian $record) => $record->canEditPayment())
                         ->action(function (Pembelian $record, \Filament\Tables\Actions\EditAction $action): void {
                             $livewire = $action->getLivewire();
                             $livewire->redirect(PembelianResource::getUrl('edit', ['record' => $record]));
                         }),
                     Tables\Actions\DeleteAction::make()
                         ->icon('heroicon-m-trash')
-                        ->visible(fn() => auth()->user()?->hasRole('godmode'))
+                        ->visible(fn() => auth()->user()?->hasRole(['godmode', 'super_admin']))
                         ->modalCancelAction(false)
                         ->requiresConfirmation()
                         ->modalHeading(
@@ -1154,7 +1177,7 @@ class PembelianResource extends BaseResource
                         ->label('Hapus')
                         ->icon('heroicon-m-trash')
                         ->color('danger')
-                        ->visible(fn() => auth()->user()?->hasRole('godmode'))
+                        ->visible(fn() => auth()->user()?->hasRole(['godmode', 'super_admin']))
                         ->requiresConfirmation()
                         ->modalCancelAction(false)
                         ->modalHeading('⚠️ Hapus Pembelian')

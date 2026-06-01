@@ -8,7 +8,7 @@
     <meta name="description" content="Laporan aktivitas divisi Web Development bulan Mei 2026">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap"
         rel="stylesheet">
 
     <style>
@@ -47,6 +47,7 @@
             --accent-slate: #475569;
             --accent-slate-bg: #f8fafc;
             --accent-slate-border: #cbd5e1;
+            --accent-emerald: #059669;
             --radius-sm: 6px;
             --radius-md: 10px;
             --radius-lg: 14px;
@@ -62,7 +63,7 @@
         }
 
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             background: var(--bg-page);
             color: var(--text-primary);
             line-height: 1.7;
@@ -83,8 +84,8 @@
 
         /* ─── Header Banner ─── */
         .report-banner {
-            background: linear-gradient(135deg, #4f46e5 0%, #6366f1 50%, #818cf8 100%);
-            padding: 20px 20px 20px;
+            background: linear-gradient(135deg, #0c1445 0%, #1e3a5f 50%, #3b82f6 100%);
+            padding: 14px 20px 14px;
             color: #ffffff;
             position: relative;
             overflow: hidden;
@@ -118,6 +119,25 @@
             text-align: center;
         }
 
+        .banner-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(8px);
+            padding: 5px 14px;
+            border-radius: 100px;
+            font-size: 10px;
+            font-weight: 600;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            margin-bottom: 6px;
+        }
+
+        .banner-label svg {
+            width: 12px;
+            height: 12px;
+        }
+
         .report-period-badge {
             display: inline-flex;
             align-items: center;
@@ -141,7 +161,14 @@
             font-size: 24px;
             font-weight: 800;
             letter-spacing: -0.5px;
-            margin-bottom: 0;
+            margin-bottom: 2px;
+        }
+
+        .banner-subtitle {
+            font-size: 13px;
+            font-weight: 400;
+            color: rgba(255, 255, 255, 0.75);
+            line-height: 1.4;
         }
 
         /* ─── Summary Strip ─── */
@@ -182,8 +209,31 @@
             margin-top: 2px;
         }
 
-        .summary-item .sum-label .icon {
-            font-size: 13px;
+        .summary-item.sum-entries .sum-value {
+            color: var(--accent-indigo);
+        }
+
+        .summary-item.sum-entries .sum-label {
+            color: var(--accent-indigo);
+            opacity: 0.7;
+        }
+
+        .summary-item.sum-categories .sum-value {
+            color: var(--accent-teal);
+        }
+
+        .summary-item.sum-categories .sum-label {
+            color: var(--accent-teal);
+            opacity: 0.7;
+        }
+
+        .summary-item.sum-tasks .sum-value {
+            color: var(--accent-emerald);
+        }
+
+        .summary-item.sum-tasks .sum-label {
+            color: var(--accent-emerald);
+            opacity: 0.7;
         }
 
         /* ─── Body Content ─── */
@@ -194,6 +244,7 @@
         /* ─── Section Title ─── */
         .section-title {
             display: flex;
+            justify-content: center;
             align-items: center;
             gap: 10px;
             margin-bottom: 20px;
@@ -330,11 +381,6 @@
             border: 1px solid var(--accent-slate-border);
         }
 
-        .badge-icon {
-            font-size: 12px;
-            line-height: 1;
-        }
-
         /* Feature */
         .td-feature {
             font-weight: 600;
@@ -347,6 +393,36 @@
             color: var(--text-secondary);
             font-size: 13px;
             line-height: 1.7;
+        }
+
+        .td-detail strong {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        /* ─── Insight Box ─── */
+        .insight-box {
+            background: var(--bg-subtle);
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius-md);
+            padding: 16px 20px;
+            margin-bottom: 24px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            line-height: 1.7;
+        }
+
+        .insight-box strong {
+            color: var(--text-primary);
+        }
+
+        .insight-box ul {
+            margin-top: 8px;
+            margin-left: 18px;
+        }
+
+        .insight-box li {
+            margin-bottom: 4px;
         }
 
         /* ─── Footer ─── */
@@ -400,7 +476,7 @@
             }
 
             .report-banner {
-                background: linear-gradient(135deg, #4f46e5 0%, #6366f1 50%, #818cf8 100%) !important;
+                background: linear-gradient(135deg, #0c1445 0%, #1e3a5f 50%, #3b82f6 100%) !important;
                 -webkit-print-color-adjust: exact;
                 print-color-adjust: exact;
                 padding: 14px 20px;
@@ -413,6 +489,15 @@
 
             .banner-title {
                 font-size: 24px;
+            }
+
+            .banner-label {
+                background: rgba(255, 255, 255, 0.25) !important;
+                border: 1px solid rgba(255, 255, 255, 0.5) !important;
+                color: #ffffff !important;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+                backdrop-filter: none;
             }
 
             .report-period-badge {
@@ -433,11 +518,37 @@
                 padding: 14px 18px;
             }
 
-            .summary-item .sum-value {
-                font-size: 22px;
+            .summary-item.sum-entries .sum-value {
                 color: var(--accent-indigo) !important;
                 -webkit-print-color-adjust: exact;
                 print-color-adjust: exact;
+            }
+
+            .summary-item.sum-entries .sum-label {
+                color: var(--accent-indigo) !important;
+                opacity: 1 !important;
+            }
+
+            .summary-item.sum-categories .sum-value {
+                color: var(--accent-teal) !important;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+
+            .summary-item.sum-categories .sum-label {
+                color: var(--accent-teal) !important;
+                opacity: 1 !important;
+            }
+
+            .summary-item.sum-tasks .sum-value {
+                color: var(--accent-emerald) !important;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+
+            .summary-item.sum-tasks .sum-label {
+                color: var(--accent-emerald) !important;
+                opacity: 1 !important;
             }
 
             .report-body {
@@ -531,14 +642,14 @@
                 padding: 16px 20px;
             }
 
+            .banner-title {
+                font-size: 20px;
+            }
+
             .report-period-badge {
                 position: static;
                 transform: none;
                 margin-bottom: 8px;
-            }
-
-            .banner-title {
-                font-size: 20px;
             }
 
             .summary-strip {
@@ -574,36 +685,62 @@
         <!-- ─── Banner Header ─── -->
         <header class="report-banner" id="report-header">
             <div class="banner-content">
+                <div class="banner-label">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="none" viewBox="0 0 24 24"
+                        stroke-width="2.5" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round"
+                            d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
+                    </svg>
+                    Technical Deep-Dive Report
+                </div>
                 <h1 class="banner-title">Web Development Division Report</h1>
-                <span class="report-period-badge">
+                <p class="banner-subtitle">Periode 1–30 Mei 2026 &nbsp;|&nbsp; Developer: Alamul Huda</p>
+                <!-- <span class="report-period-badge">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2"
                         stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round"
                             d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5" />
                     </svg>
                     Mei 2026
-                </span>
+                </span> -->
             </div>
         </header>
 
         <!-- ─── Summary Strip ─── -->
         <div class="summary-strip" id="summary-section">
-            <div class="summary-item">
-                <div class="sum-value">7</div>
-                <div class="sum-label"><span class="icon">📋</span> Total Entri</div>
+            <div class="summary-item sum-entries">
+                <div class="sum-value">27</div>
+                <div class="sum-label">Total Entri</div>
             </div>
-            <div class="summary-item">
-                <div class="sum-value">3</div>
-                <div class="sum-label"><span class="icon">🏷️</span> Kategori</div>
+            <div class="summary-item sum-categories">
+                <div class="sum-value">5</div>
+                <div class="sum-label">Kategori</div>
             </div>
-            <div class="summary-item">
-                <div class="sum-value">7</div>
-                <div class="sum-label"><span class="icon">✅</span> Tasks Selesai</div>
+            <div class="summary-item sum-tasks">
+                <div class="sum-value">27</div>
+                <div class="sum-label">Tasks Selesai</div>
             </div>
         </div>
 
         <!-- ─── Body ─── -->
         <main class="report-body">
+
+            <div class="insight-box">
+                <strong>Ringkasan Eksekutif (1–28 Mei 2026):</strong> Bulan ini difokuskan pada perbaikan bug kritis,
+                implementasi fitur baru, dan stabilisasi sistem pasca-fundamental fix. Beberapa poin utama:
+                <ul>
+                    <li><strong>Perbaikan bug cross-module</strong> pada Penjualan, Pembelian, Stock Batch, Tukar
+                        Tambah, dan exiting file dokumen.</li>
+                    <li><strong>Penguatan keamanan</strong> melalui alur penghapusan aman multi-langkah dengan
+                        verifikasi kata sandi pada Tukar Tambah.</li>
+                    <li><strong>Peningkatan UX</strong> melalui penghapusan addable repeatable, redirect pasca-edit,
+                        fileupload transaksi, dan update UI modal konfirmasi delete.</li>
+                    <li><strong>Peningkatan arsitektur</strong> dengan implementasi observer pada Pembelian, stock
+                        mutation untuk Tukar Tambah, dan command batch update.</li>
+                    <li><strong>Stabilisasi infrastruktur</strong> melalui update documentation deployment, permission
+                        server, dan migrasi database sale_tt / sale_return_tt.</li>
+                </ul>
+            </div>
 
             <div class="section-title">
                 <span class="line"></span>
@@ -622,80 +759,315 @@
                 </thead>
                 <tbody>
                     <tr>
-                        <td class="td-date">
-                            2026-05-05
-                            <span class="day">Selasa</span>
-                        </td>
-                        <td>
-                            <span class="badge badge-bugfix">
-                                <span class="badge-icon">🐛</span> Perbaikan Bug
-                            </span>
-                        </td>
-                        <td class="td-feature">Disable Produk</td>
-                        <td class="td-detail">Perbaikan mekanisme disable/hapus produk agar tidak mempengaruhi data transaksi historis dan memastikan integritas referensial tetap terjaga.</td>
-                    </tr>
-                    <tr>
-                        <td class="td-date"></td>
-                        <td>
-                            <span class="badge badge-service">
-                                <span class="badge-icon">⚙️</span> Konfigurasi
-                            </span>
-                        </td>
-                        <td class="td-feature">Update Deploy.md</td>
-                        <td class="td-detail">Pembaruan dokumentasi deployment terkait konfigurasi server, environment variable, dan prosedur deploy terbaru.</td>
-                    </tr>
-                    <tr>
-                        <td class="td-date">
+                        <td class="td-date" rowspan="4">
                             2026-05-04
                             <span class="day">Senin</span>
                         </td>
                         <td>
                             <span class="badge badge-bugfix">
-                                <span class="badge-icon">🐛</span> Perbaikan Bug
+                                Perbaikan Bug
                             </span>
                         </td>
                         <td class="td-feature">Fix Exiting File Penjualan dan Tukar Tambah</td>
-                        <td class="td-detail">Perbaikan pada proses exiting file dokumen penjualan dan tukar tambah, memastikan file attachment dapat diakses dan diunduh dengan benar.</td>
+                        <td class="td-detail">Perbaikan pada proses exiting file dokumen penjualan dan tukar tambah,
+                            memastikan file attachment dapat diakses dan diunduh dengan benar.</td>
                     </tr>
                     <tr>
-                        <td class="td-date"></td>
                         <td>
                             <span class="badge badge-service">
-                                <span class="badge-icon">⚙️</span> Konfigurasi
+                                Konfigurasi
                             </span>
                         </td>
                         <td class="td-feature">Update Deploy.md</td>
-                        <td class="td-detail">Penyesuaian instruksi deployment dan konfigurasi Docker untuk environment production.</td>
+                        <td class="td-detail">Penyesuaian instruksi deployment dan konfigurasi Docker untuk environment
+                            production.</td>
                     </tr>
                     <tr>
-                        <td class="td-date"></td>
                         <td>
                             <span class="badge badge-bugfix">
-                                <span class="badge-icon">🐛</span> Perbaikan Bug
+                                Perbaikan Bug
                             </span>
                         </td>
                         <td class="td-feature">Fix Penjualan, Pembelian, Stock Batch</td>
-                        <td class="td-detail">Perbaikan bug pada modul penjualan, pembelian, dan stock batch terkait sinkronisasi data stok, perhitungan total, dan update status transaksi.</td>
+                        <td class="td-detail">Perbaikan bug pada modul penjualan, pembelian, dan stock batch terkait
+                            sinkronisasi data stok, perhitungan total, dan update status transaksi.</td>
                     </tr>
                     <tr>
-                        <td class="td-date"></td>
                         <td>
                             <span class="badge badge-bugfix">
-                                <span class="badge-icon">🐛</span> Perbaikan Bug
+                                Perbaikan Bug
                             </span>
                         </td>
                         <td class="td-feature">Fix Problem Tukar Tambah dan Stock Batch SoT</td>
-                        <td class="td-detail">Penyelesaian masalah pada modul tukar tambah dan stock batch SoT (Stock on Track), memperbaiki logika perhitungan selisih harga dan pelacakan batch stok.</td>
+                        <td class="td-detail">Penyelesaian masalah pada modul tukar tambah dan stock batch SoT (Stock on
+                            Track), memperbaiki logika perhitungan selisih harga dan pelacakan batch stok.</td>
                     </tr>
                     <tr>
-                        <td class="td-date"></td>
+                        <td class="td-date" rowspan="4">
+                            2026-05-05
+                            <span class="day">Selasa</span>
+                        </td>
+                        <td>
+                            <span class="badge badge-bugfix">
+                                Perbaikan Bug
+                            </span>
+                        </td>
+                        <td class="td-feature">Disable Produk</td>
+                        <td class="td-detail">Perbaikan mekanisme disable/hapus produk agar tidak mempengaruhi data
+                            transaksi historis dan memastikan integritas referensial tetap terjaga.</td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <span class="badge badge-service">
+                                Konfigurasi
+                            </span>
+                        </td>
+                        <td class="td-feature">Update Deploy.md</td>
+                        <td class="td-detail">Pembaruan dokumentasi deployment terkait konfigurasi server, environment
+                            variable, dan prosedur deploy terbaru.</td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <span class="badge badge-bugfix">
+                                Perbaikan Bug
+                            </span>
+                        </td>
+                        <td class="td-feature">Pembayaran Tukar Tambah</td>
+                        <td class="td-detail">Perbaikan mekanisme pembayaran pada modul tukar tambah agar sesuai dengan
+                            alur bisnis dan validasi pembayaran yang benar.</td>
+                    </tr>
+                    <tr>
                         <td>
                             <span class="badge badge-impl">
-                                <span class="badge-icon">🚀</span> Implementasi
+                                Implementasi
                             </span>
                         </td>
                         <td class="td-feature">Penjualan Flexible</td>
-                        <td class="td-detail">Penambahan fleksibilitas pada modul penjualan untuk mendukung berbagai skenario transaksi, penyesuaian validasi, dan perbaikan flow input data.</td>
+                        <td class="td-detail">Penambahan fleksibilitas pada modul penjualan untuk mendukung berbagai
+                            skenario transaksi, penyesuaian validasi, dan perbaikan flow input data.</td>
+                    </tr>
+                    <tr>
+                        <td class="td-date" rowspan="1">
+                            2026-05-06
+                            <span class="day">Rabu</span>
+                        </td>
+                        <td>
+                            <span class="badge badge-bugfix">
+                                Perbaikan Bug
+                            </span>
+                        </td>
+                        <td class="td-feature">Hapus Fungsi Addable pada Repeatable Penjualan dan Pembelian</td>
+                        <td class="td-detail">Penghapusan fungsi addable pada field repeatable penjualan dan pembelian
+                            untuk menyederhanakan proses input data.</td>
+                    </tr>
+                    <tr>
+                        <td class="td-date" rowspan="3">
+                            2026-05-07
+                            <span class="day">Kamis</span>
+                        </td>
+                        <td>
+                            <span class="badge badge-impl">
+                                Implementasi
+                            </span>
+                        </td>
+                        <td class="td-feature">Step by Step Delete Godmode</td>
+                        <td class="td-detail">Implementasi penghapusan bertahap (step-by-step) dengan mode godmode untuk
+                            pengelolaan data yang lebih terkontrol.</td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <span class="badge badge-impl">
+                                Implementasi
+                            </span>
+                        </td>
+                        <td class="td-feature">Stock Mutation Tukar Tambah</td>
+                        <td class="td-detail">Implementasi mekanisme mutasi stok pada modul tukar tambah untuk mencatat
+                            perubahan stok secara otomatis.</td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <span class="badge badge-impl">
+                                Implementasi
+                            </span>
+                        </td>
+                        <td class="td-feature">Update Command Grand Total dan Total Paid di tb_pembelian Item</td>
+                        <td class="td-detail">Penambahan command artisan untuk memperbarui grand total dan total paid
+                            pada item pembelian secara batch.</td>
+                    </tr>
+                    <tr>
+                        <td class="td-date" rowspan="2">
+                            2026-05-08
+                            <span class="day">Jumat</span>
+                        </td>
+                        <td>
+                            <span class="badge badge-impl">
+                                Implementasi
+                            </span>
+                        </td>
+                        <td class="td-feature">Alur Kerja Penghapusan Aman Multi-langkah dengan Verifikasi Kata Sandi ke
+                            TukarTambah</td>
+                        <td class="td-detail">Penambahan mekanisme penghapusan aman multi-langkah dengan verifikasi kata
+                            sandi pada sumber daya Tukar Tambah untuk meningkatkan keamanan.</td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <span class="badge badge-design">
+                                Desain
+                            </span>
+                        </td>
+                        <td class="td-feature">Update UI Modal Konfirmasi Delete</td>
+                        <td class="td-detail">Pembaruan desain antarmuka modal konfirmasi hapus untuk meningkatkan
+                            pengalaman pengguna dan kejelasan konfirmasi aksi.</td>
+                    </tr>
+                    <tr>
+                        <td class="td-date" rowspan="3">
+                            2026-05-12
+                            <span class="day">Selasa</span>
+                        </td>
+                        <td>
+                            <span class="badge badge-impl">
+                                Implementasi
+                            </span>
+                        </td>
+                        <td class="td-feature">Log Validasi</td>
+                        <td class="td-detail">Penambahan fitur log validasi untuk mencatat proses validasi data dan
+                            memudahkan debugging.</td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <span class="badge badge-bugfix">
+                                Perbaikan Bug
+                            </span>
+                        </td>
+                        <td class="td-feature">Menambahkan allowHTML() di StockAdjustment dan Stock Opname</td>
+                        <td class="td-detail">Penambahan fungsi allowHTML() pada modul Stock Adjustment dan Stock Opname
+                            untuk mendukung rendering HTML di field tertentu.</td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <span class="badge badge-impl">
+                                Implementasi
+                            </span>
+                        </td>
+                        <td class="td-feature">Pembelian Observe</td>
+                        <td class="td-detail">Implementasi observer pada modul pembelian untuk menjalankan logika
+                            otomatis saat terjadi perubahan data.</td>
+                    </tr>
+                    <tr>
+                        <td class="td-date" rowspan="4">
+                            2026-05-19
+                            <span class="day">Selasa</span>
+                        </td>
+                        <td>
+                            <span class="badge badge-migrate">
+                                Migrasi
+                            </span>
+                        </td>
+                        <td class="td-feature">Add Sale_TT dan Sale_Return_TT to Stock Mutation</td>
+                        <td class="td-detail">Penambahan tipe mutasi stok sale_tt dan sale_return_tt untuk mendukung
+                            pelacakan perubahan stok dari transaksi tukar tambah dan retur-nya.</td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <span class="badge badge-impl">
+                                Implementasi
+                            </span>
+                        </td>
+                        <td class="td-feature">Visible Action Void dan Posting untuk Pembelian dari Tukar Tambah</td>
+                        <td class="td-detail">Penyesuaian visibilitas action void dan posting pada transaksi pembelian
+                            yang berasal dari tukar tambah sesuai alur bisnis.</td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <span class="badge badge-impl">
+                                Implementasi
+                            </span>
+                        </td>
+                        <td class="td-feature">Update Locked</td>
+                        <td class="td-detail">Pembaruan mekanisme locked/field kunci pada transaksi untuk mencegah
+                            perubahan data setelah proses posting.</td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <span class="badge badge-impl">
+                                Implementasi
+                            </span>
+                        </td>
+                        <td class="td-feature">Update Behavior Pembelian</td>
+                        <td class="td-detail">Penyesuaian behavior modul pembelian termasuk validasi dan logika
+                            penyimpanan data.</td>
+                    </tr>
+                    <tr>
+                        <td class="td-date" rowspan="1">
+                            2026-05-20
+                            <span class="day">Rabu</span>
+                        </td>
+                        <td>
+                            <span class="badge badge-bugfix">
+                                Perbaikan Bug
+                            </span>
+                        </td>
+                        <td class="td-feature">Update File Image Broken Input Transaksi</td>
+                        <td class="td-detail">Perbaikan file image yang rusak pada form input transaksi untuk memastikan
+                            tampilan gambar berfungsi dengan baik.</td>
+                    </tr>
+                    <tr>
+                        <td class="td-date" rowspan="3">
+                            2026-05-24
+                            <span class="day">Minggu</span>
+                        </td>
+                        <td>
+                            <span class="badge badge-service">
+                                Konfigurasi
+                            </span>
+                        </td>
+                        <td class="td-feature">Membuka Akses Nginx Server</td>
+                        <td class="td-detail">Perbaikan permission server dengan menjalankan chmod pada storage publik
+                            di container Docker untuk mengatasi masalah akses file.</td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <span class="badge badge-impl">
+                                Implementasi
+                            </span>
+                        </td>
+                        <td class="td-feature">Redirect Index Setelah Edit Transaksi</td>
+                        <td class="td-detail">Penambahan redirect ke halaman index setelah proses edit transaksi selesai
+                            demi kelancaran alur kerja pengguna.</td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <span class="badge badge-impl">
+                                Implementasi
+                            </span>
+                        </td>
+                        <td class="td-feature">FileUpload Input Transaksi</td>
+                        <td class="td-detail">Implementasi fitur upload file pada input transaksi untuk mendukung
+                            penyimpanan dokumen pendukung.</td>
+                    </tr>
+                    <tr>
+                        <td class="td-date" rowspan="2">
+                            2026-05-28
+                            <span class="day">Kamis</span>
+                        </td>
+                        <td>
+                            <span class="badge badge-impl">
+                                Implementasi
+                            </span>
+                        </td>
+                        <td class="td-feature">Remove SaveMode Final di Edit Penjualan</td>
+                        <td class="td-detail">Penghapusan mekanisme save mode final pada form edit transaksi penjualan
+                            untuk memberikan fleksibilitas penyimpanan data.</td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <span class="badge badge-impl">
+                                Implementasi
+                            </span>
+                        </td>
+                        <td class="td-feature">Remove Relation Manager Jasa dan Item di Edit Penjualan</td>
+                        <td class="td-detail">Penghapusan relation manager jasa dan item pada halaman edit penjualan
+                            untuk menyederhanakan antarmuka dan menghindari konflik data.</td>
                     </tr>
                 </tbody>
             </table>
